@@ -1,0 +1,287 @@
+---
+title: "significance_testing3"
+format: html
+editor: visual
+---
+
+## NEW LIMMA T-STATISTIC VERSION
+
+```{r}
+#!/usr/bin/env Rscript
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(limma)
+  library(purrr)
+})
+
+# ================== INPUTS ==================
+infile <- "/Users/Dirkdeboer/Downloads/original.tsv"
+
+# Comparison groups in original.tsv (case-sensitive)
+g_gald   <- "Fetal_liver_lysate_bait"
+g_female <- "Liver_lysate_female_control"
+g_spouse <- "Liver_lysate_spouses_control"
+groups_keep <- c(g_gald, g_female, g_spouse)
+
+# The OTHER negative-control groups (used ONLY to define "sticky")
+other_ctrl_groups <- c("Female_control", "Spouses_control", "Control_bait")
+STICKY_GROUPS <- c(groups_keep, other_ctrl_groups)
+
+# Stickiness rule: present in >=95% of samples in EACH of the six groups
+STICKY_WITHIN_GROUP_THR <- 0.95
+
+# Limma & preprocessing knobs
+MIN_TOTAL_DETECTIONS <- 1      # >=1 real observation overall before testing
+IMPUTE_Q              <- 0.01  # MinDet quantile
+MINDET_SHIFT          <- 1.0   # subtract 1 on log2 scale for imputed NAs
+
+# Output directory
+outdir <- "results/01_from_original"
+dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+
+# ================== SANITY: GROUPS EXIST ==================
+.all_groups <- read_tsv(infile, guess_max = 2e5, show_col_types = FALSE) %>%
+  distinct(group) %>% pull(group)
+
+missing_sticky <- setdiff(STICKY_GROUPS, .all_groups)
+if (length(missing_sticky) > 0)
+  stop("Sticky group(s) not found in original.tsv: ", paste(missing_sticky, collapse=", "))
+
+missing_comp <- setdiff(groups_keep, .all_groups)
+if (length(missing_comp) > 0)
+  stop("Comparison group(s) not found in original.tsv: ", paste(missing_comp, collapse=", "))
+
+# ================== LOAD FULL (for sticky) — Intensity already log2 ==================
+df_all <- read_tsv(infile, guess_max = 2e5, show_col_types = FALSE) %>%
+  mutate(
+    identifier = as.character(identifier),            # e.g. SYMBOL~UNIPROT
+    base_id    = toupper(sub("~.*$", "", identifier)),# SYMBOL part
+    is_ab      = grepl("^(IGH|IGK|IGL|IGJ)", base_id) | base_id %in% c("JCHAIN"),
+    log2_int   = suppressWarnings(readr::parse_number(as.character(Intensity))),
+    log2_int   = ifelse(is.finite(log2_int), log2_int, NA_real_)
+  ) %>%
+  filter(!is_ab)   # remove antibody-like entries completely
+
+# ================== STICKY ACROSS ALL SIX GROUPS ==================
+sticky_ids <- df_all %>%
+  filter(group %in% STICKY_GROUPS) %>%
+  mutate(present = is.finite(log2_int)) %>%
+  group_by(identifier, group) %>%
+  summarise(prop_present = mean(present), .groups = "drop") %>%
+  tidyr::pivot_wider(
+    id_cols = identifier,
+    names_from = group,
+    values_from = prop_present
+  ) %>%
+  mutate(
+    is_sticky = pmap_lgl(across(all_of(STICKY_GROUPS)),
+                         ~ all(map_lgl(list(...),
+                                       ~ is.finite(.x) && .x >= STICKY_WITHIN_GROUP_THR)))
+  ) %>%
+  filter(is_sticky) %>%
+  pull(identifier)
+
+cat("Sticky (ALL 6) removed: ", length(sticky_ids),
+    " | within-group thr: ", STICKY_WITHIN_GROUP_THR, "\n", sep="")
+
+# ================== LOAD COMPARISON DATA (3 groups), DROP STICKY & ABs ==================
+df <- read_tsv(infile, guess_max = 2e5, show_col_types = FALSE) %>%
+  filter(group %in% groups_keep) %>%         # only GALD + 2 liver controls
+  mutate(
+    identifier = as.character(identifier),
+    base_id    = toupper(sub("~.*$", "", identifier)),
+    is_ab      = grepl("^(IGH|IGK|IGL|IGJ)", base_id) | base_id %in% c("JCHAIN"),
+    log2_int   = suppressWarnings(readr::parse_number(as.character(Intensity))),
+    log2_int   = ifelse(is.finite(log2_int), log2_int, NA_real_)
+  ) %>%
+  filter()
+
+stopifnot(all(c("identifier","sample","group","log2_int") %in% names(df)))
+
+# ================== LIMMA (PRIMARY INFERENCE) ==================
+# Guardrail: >=1 real detection overall BEFORE imputation
+ok_ids <- df %>%
+  group_by(identifier) %>%
+  summarise(n_obs = sum(is.finite(log2_int)), .groups="drop") %>%
+  filter(n_obs >= MIN_TOTAL_DETECTIONS) %>%
+  pull(identifier)
+
+df2 <- df %>% filter(identifier %in% ok_ids)
+
+# ---- Wide matrix (rows = identifiers, columns = samples) ----
+mat <- df2 %>%
+  select(identifier, sample, log2_int) %>%
+  distinct() %>%
+  tidyr::pivot_wider(
+    id_cols = identifier,
+    names_from = sample,
+    values_from = log2_int
+  )
+
+ids <- mat$identifier
+M   <- as.matrix(mat %>% select(-identifier))
+rownames(M) <- ids
+
+# ---- Robust per-sample MinDet imputation ----
+impute_min_det <- function(v, q = IMPUTE_Q, shift = MINDET_SHIFT){
+  is_na <- is.na(v) | !is.finite(v)
+  if (all(is_na)) return(ifelse(is_na, -20, v))  # extreme low fallback
+  vmin <- as.numeric(quantile(v[!is_na], probs = q, names = FALSE, type = 7))
+  v[is_na] <- vmin - shift
+  v
+}
+M_imp <- apply(M, 2, impute_min_det, q = IMPUTE_Q, shift = MINDET_SHIFT)
+
+# ---- Sample annotation & design: GALD vs CTRL ----
+samp_anno <- df2 %>%
+  distinct(sample, group) %>%
+  mutate(case_control = if_else(group == g_gald, "GALD", "CTRL")) %>%
+  filter(sample %in% colnames(M_imp))
+
+M_imp <- M_imp[, samp_anno$sample, drop = FALSE]
+
+design <- model.matrix(~ 0 + factor(case_control, levels = c("CTRL","GALD")),
+                       data = samp_anno)
+colnames(design) <- c("CTRL","GALD")
+contrast <- makeContrasts(GALDvsCTRL = GALD - CTRL, levels = design)
+
+fit <- lmFit(M_imp, design)
+fit <- contrasts.fit(fit, contrast)
+fit <- eBayes(fit, robust = TRUE, trend = TRUE)
+
+tt <- topTable(fit, coef = "GALDvsCTRL", number = Inf, sort.by = "P") %>%
+  rownames_to_column("identifier") %>%
+  rename(
+    logFC     = logFC,     # log2(GALD/CTRL)
+    AveExpr   = AveExpr,
+    t_stat    = t,
+    P.Value   = P.Value,
+    adj.P.Val = adj.P.Val,
+    B         = B
+  )
+
+# ================== MAP IDENTIFIER -> GENE SYMBOL ==================
+# identifier format assumed: SYMBOL~UNIPROT (from original.tsv)
+tt <- tt %>%
+  mutate(symbol = toupper(sub("~.*$", "", identifier))) %>%
+  filter(!is.na(symbol) & symbol != "")
+
+# ---- Save full protein-level limma table ----
+limma_csv <- file.path(outdir, "protein_ranking_limma_all.csv")
+readr::write_csv(tt, limma_csv)
+cat("Wrote: ", limma_csv, "\n", sep="")
+
+# ================== BUILD GENE-LEVEL RANKING VECTOR FOR FGSEA ==================
+# Multiple identifiers may map to same symbol → keep the one with largest |t_stat|
+ranks_tbl <- tt %>%
+  arrange(desc(abs(t_stat))) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  select(symbol, t_stat)
+
+# Named numeric vector: names = symbols, values = t_stat (sorted decreasing)
+ranks_vec <- setNames(ranks_tbl$t_stat, ranks_tbl$symbol)
+ranks_vec <- sort(ranks_vec, decreasing = TRUE)
+
+# Save as RDS (for FGSEA)
+ranks_rds <- file.path(outdir, "ranks_tstat_full_all.rds")
+saveRDS(ranks_vec, ranks_rds)
+cat("Wrote: ", ranks_rds, " (", length(ranks_vec), " genes)\n", sep="")
+
+# Also save a CSV for human inspection
+ranks_csv <- file.path(outdir, "ranks_tstat_full_all.csv")
+readr::write_csv(
+  ranks_tbl %>% arrange(desc(t_stat)),
+  ranks_csv
+)
+cat("Wrote: ", ranks_csv, "\n", sep="")
+
+# ================== RUN SUMMARY ==================
+cat("\n=== RUN SUMMARY (01_build_ranks_from_original.R) ===\n",
+    "Proteins in limma table (post-filter): ", nrow(tt), "\n",
+    "Unique gene symbols in ranking vector: ", length(ranks_vec), "\n",
+    "Min/Max t_stat: ", signif(min(ranks_vec),3), " / ", signif(max(ranks_vec),3), "\n",
+    sep = "")
+
+```
+
+```{r}
+suppressPackageStartupMessages({ library(tidyverse); library(readr) })
+
+# ================== INPUTS ==================
+infile  <- "/Users/Dirkdeboer/Downloads/original.tsv"
+g_gald   <- "Fetal_liver_lysate_bait"
+g_female <- "Liver_lysate_female_control"
+g_spouse <- "Liver_lysate_spouses_control"
+groups_keep <- c(g_gald, g_female, g_spouse)
+
+# Presence thresholds (keep these meaningful even if testing has 0% coverage)
+GALD_ONLY_THR <- 0.00   # ≥60% of GALD samples show detection
+CTRL_MAX_THR  <- 0.00   # 0% of pooled controls show detection
+
+# ================== LOAD & CLEAN ==================
+df <- read_tsv(infile, guess_max = 2e5, show_col_types = FALSE) %>%
+  filter(group %in% groups_keep) %>%
+  mutate(
+    identifier = as.character(identifier),
+    base_id    = toupper(sub("~.*$", "", identifier)),
+    is_ab      = grepl("^(IGH|IGK|IGL|IGJ)", base_id) | base_id %in% c("JCHAIN"),
+    # Intensity is already log2
+    log2_int   = suppressWarnings(parse_number(as.character(Intensity))),
+    log2_int   = ifelse(is.finite(log2_int), log2_int, NA_real_)
+  ) %>%
+  filter(!is_ab)
+
+# Build complete grid (identifier × sample) so denominators are correct
+all_samps <- df %>% distinct(group, sample)
+grid <- tidyr::crossing(identifier = unique(df$identifier),
+                        group      = all_samps$group,
+                        sample     = all_samps$sample)
+
+pres_tbl <- grid %>%
+  left_join(df %>% select(identifier, group, sample, log2_int),
+            by = c("identifier","group","sample")) %>%
+  mutate(present = !is.na(log2_int)) %>%
+  group_by(identifier, group) %>%
+  summarise(n_present = sum(present),
+            n_total   = n(),
+            prop_present = n_present / n_total,
+            .groups = "drop") %>%
+  pivot_wider(id_cols = identifier,
+              names_from = group,
+              values_from = c(n_present, n_total, prop_present),
+              names_sep = ".")
+
+# Pooled controls
+pres_tbl <- pres_tbl %>%
+  mutate(
+    n_present.ctrl = coalesce(.data[[paste0("n_present.", g_female)]], 0) +
+                     coalesce(.data[[paste0("n_present.", g_spouse)]], 0),
+    n_total.ctrl   = coalesce(.data[[paste0("n_total.",   g_female)]], 0) +
+                     coalesce(.data[[paste0("n_total.",   g_spouse)]], 0),
+    prop_present.ctrl = if_else(n_total.ctrl > 0, n_present.ctrl / n_total.ctrl, 0),
+    n_present.gald    = coalesce(.data[[paste0("n_present.", g_gald)]], 0),
+    n_total.gald      = coalesce(.data[[paste0("n_total.",   g_gald)]], 0),
+    prop_present.gald = if_else(n_total.gald > 0, n_present.gald / n_total.gald, 0)
+  )
+
+gald_only <- pres_tbl %>%
+  transmute(identifier,
+            prop_present.gald,
+            prop_present.ctrl) %>%
+  filter(prop_present.gald >= GALD_ONLY_THR,
+         prop_present.ctrl <= CTRL_MAX_THR)
+
+# (Optional) write out candidates
+readr::write_tsv(gald_only, "protein_gald_only.tsv")
+
+```
+
+```{}
+```
+
+```{}
+```
+
+```         
+```

@@ -1,0 +1,974 @@
+---
+title: "data_exploration"
+format:
+  pdf:
+    toc: true
+    number-sections: true
+    colorlinks: true
+editor: visual
+echo: false
+name: Dirk de Boer
+---
+
+## Quarto
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+## Running Code
+
+When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse)
+})
+
+df <- read_tsv("original.tsv", show_col_types = FALSE)
+```
+
+#### Some primary statistics about the data
+
+```{r}
+id_col <- "identifier"
+
+# Clean
+df <- df %>% filter(!is.na(.data[[id_col]]))
+
+# Total unique proteins
+total_proteins <- df %>% distinct(!!sym(id_col)) %>% nrow()
+
+# Total antibodies (any identifier starting with IGH, IGK, or IGL)
+total_antibodies <- df %>% 
+  distinct(!!sym(id_col)) %>%
+  filter(str_detect(.data[[id_col]], "^IG[HLK]")) %>%
+  nrow()
+
+# Fraction of missing values overall
+frac_missing <- mean(is.na(df$Intensity))
+
+# Median intensity (overall signal level)
+median_intensity <- median(df$Intensity, na.rm = TRUE)
+
+# Number of samples and groups
+n_samples <- n_distinct(df$sample)
+n_groups  <- n_distinct(df$group)
+
+# Put into a small summary table
+summary_tbl <- tibble(
+  Metric = c("Total unique proteins",
+             "Total unique antibodies (Ig*)",
+             "Fraction missing values",
+             "Median intensity (log scale)",
+             "Number of samples",
+             "Number of groups"),
+  Value = c(total_proteins,
+            total_antibodies,
+            round(frac_missing, 3),
+            round(median_intensity, 2),
+            n_samples,
+            n_groups)
+)
+
+summary_tbl
+```
+
+#### Boxplot of number of proteins detected for each sample, sorted by group
+
+Most notable is the variance in number of proteins in the GALD samples, compared to the other samples that remain more consistent.
+
+```{r}
+# Count per sample
+protein_counts <- df %>%
+  group_by(sample, group) %>%
+  summarise(n_proteins = sum(!is.na(Intensity)), .groups = "drop")
+
+# Plot counts per sample
+ggplot(protein_counts, aes(x = group, y = n_proteins, fill = group)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.2, alpha = 0.6) +
+  theme_minimal() +
+  labs(title = "Proteins detected per sample",
+       y = "Number of proteins", x = "Group") +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+#### Intensity distributions
+
+The first figure shows the intensity distribution in a density plot. This highlights the difference in intensities between the liver-lysate-bait groups and the negative control groups, with the bait groups showing a more concentrated intensity, but similar within groups. The negative control groups show more distributed / spread intensity for all proteins.
+
+Possible cause:
+
+-   More abundant protein in the bait groups, resulting in more consistency. Simultaneously, the control groups have a more evenly distributed density across intensities because there is a lacking number of proteins compared to the bait groups.
+
+```{r}
+# Density plot of intensities
+ggplot(df, aes(x = Intensity, color = group, fill = group)) +
+  geom_density(alpha = 0.2) +
+  theme_minimal() +
+  labs(title = "Distribution of intensities per group",
+       x = "log(Intensity)", y = "Density")
+
+# Or a boxplot
+ggplot(df, aes(x = group, y = Intensity, fill = group)) +
+  geom_boxplot(outlier.shape = NA) +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Intensity distributions per group",
+       y = "log(Intensity)", x = "Group")
+
+```
+
+#### Upset graph showing similarities in proteins between groups
+
+Interpretation:
+
+-   Lysate-bait groups share 1425 proteins together
+
+-   GALD has 13 unique proteins; so do the healthy mothers.
+
+-   345 proteins are present in all groups, therefore can be classified as noise.
+
+```{r}
+library(UpSetR)
+# 1) Build presence/absence per group (requires non-NA intensity)
+present <- df %>%
+  group_by(group, !!sym(id_col)) %>%
+  summarise(present = any(!is.na(Intensity)), .groups = "drop")
+
+# 2) Make a binary wide matrix for UpSetR
+mat <- present %>%
+  mutate(val = as.integer(present)) %>%
+  select(group, !!sym(id_col), val) %>%
+  distinct() %>%
+  pivot_wider(names_from = group, values_from = val, values_fill = 0) %>%
+  arrange(!!sym(id_col)) %>%
+  distinct(!!sym(id_col), .keep_all = TRUE) %>%   # guard against duplicates
+  column_to_rownames(id_col)
+
+# 3) Plot
+upset(as.data.frame(mat),
+      nsets = min(8, ncol(mat)),
+      nintersects = 20,
+      order.by = "freq",
+      mainbar.y.label = "Intersection size",
+      sets.x.label = "Proteins per group")
+
+unique_counts <- colSums(mat == 1 & rowSums(mat) == 1)
+unique_counts
+save.image()
+```
+
+#### Upset plot of antibodies
+
+Here another upset plot, but now solely focusing on the antibodies, to paint a picture of the shared and unique antibodies between groups. Below, a table is also shown to show the exact number of antibodies present in each sample group.
+
+```{r}
+igl_df <- df %>%
+  filter(!is.na(.data[[id_col]])) %>%
+  filter(str_starts(.data[[id_col]], "^IG[HLKG]")) %>%
+  distinct(group, !!sym(id_col))
+
+# Turn into a named list of sets: group -> unique IGL identifiers
+sets_by_group_igl <- igl_df %>%
+  group_split(group) %>%
+  setNames(igl_df %>% distinct(group) %>% pull()) %>%
+  lapply(function(x) x[[id_col]])
+  
+  # Choose groups to plot (for a classic Venn keep to 2–4 groups)
+groups_to_plot <- names(sets_by_group_igl)  # edit if needed
+venn_input <- sets_by_group_igl[groups_to_plot]
+
+  presence_mat <- igl_df %>%
+    mutate(val = 1) %>%
+    pivot_wider(names_from = group, values_from = val, values_fill = 0) %>%
+    distinct() %>%
+    column_to_rownames(id_col)
+  upset(as.data.frame(presence_mat), nsets = min(8, ncol(presence_mat)),
+        nintersects = 20, order.by = "freq",
+        mainbar.y.label = "Intersection size",
+        sets.x.label = "antibody peptides per group")
+```
+
+```{r}
+antibody_counts <- igl_df %>% count(group, name = "^IG[HLKG]")
+antibody_counts
+```
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse)
+})
+
+# Load data (if not yet loaded)
+igl_df <- read_tsv("original.tsv", show_col_types = FALSE)
+
+# Identify antibody-related identifiers (e.g., IGH, IGL, IGK, IGG...)
+antibody_counts <- igl_df %>%
+  filter(str_detect(identifier, "^IG[HKLGC]")) %>%    # regex for Ig genes/chains
+  count(group, name = "n_antibody_proteins")
+
+antibody_counts
+
+```
+
+
+```{r}
+antibody_names <- igl_df %>%
+  filter(str_detect(identifier, "^IG[HKLGC]")) %>%
+  group_by(group) %>%
+  summarise(unique_antibodies = paste(unique(identifier), collapse = ", "))
+
+antibody_names
+
+```
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse)
+})
+
+# Load data (if not already loaded)
+igl_df <- read_tsv("original.tsv", show_col_types = FALSE)
+
+# === Filter antibody proteins and summarise per group ===
+antibody_summary <- igl_df %>%
+  filter(str_detect(identifier, "^IG[HKLGC]")) %>%
+  group_by(group) %>%
+  summarise(
+    n_antibody_proteins = n_distinct(identifier),
+    unique_antibodies = paste(unique(identifier), collapse = ", ")
+  )
+
+# === Write to CSV ===
+write_csv(antibody_summary, "antibody_summary.csv")
+
+# Optional: print confirmation
+cat("✅ Antibody summary written to antibody_summary.csv\n")
+antibody_summary
+
+```
+```{r}
+genes <- c("ABITRAM","ACAD8","ACSL1","ACSS1","ADD1","AGO1","ANXA11","AP1M1","ARCN1",
+           "ATP6V0A1","BDH1","C3","C4BPA","C8G","CALM3","CBX3","CIAO2A","CLINT1",
+           "CNPY2","COLGALT1","COX7C","CPT1A","CPT2","DCXR","DGLUCY","DLAT","DPM1",
+           "DYNC1H1","EIF3M","ELOB","ELP3","EMC7","ERGIC1","ERH","FAHD2A","FARP1",
+           "FCGRT","FDFT1","FDXR","GALK2","GBF1","GFUS","GMPR2","GNAQ","HAAO","HP",
+           "KEAP1","KTN1","LRBA","MAP2K3","ME2","MTOR","NDUFA9","PBDC1","PCYOX1","PFAS",
+           "PGLYRP2","PLD3","PON1","PPIB","PPP6R1","PSMA2","PSMB5","PSMC6","PUS3",
+           "PUS7","QPRT","RPL18A","RPL35A","RRM1","RUVBL2","SCAMP2","SCFD1","SCP2",
+           "SEPTIN2","SET","SNRPD2","SPAG9","SQOR","SRP68","SRPK1","STIP1","SUCLG2",
+           "TARDBP","TARS1","TCIRG1","TMEM143","TMEM97","TMX2","TPM1","TRMT2A","TSR1",
+           "UBA5","WDR4")
+
+idents <- c("ATPAF1~I3L448","PSMG3~Q9BT73","GSTT2B~Q6ICJ4","ACOX2~Q99424","OPA1~O60313-10",
+            "C7orf50~C9JQV0","FDX1~P10109","NDUFV3~P56181-2","HGD~Q93099","PTGFRN~Q9P2B2",
+            "RRM1~P23921","DYNLRB1~Q9NP97","OSBP~P22059","ATL3~Q6DD88","THEM6~Q8WUY1",
+            "DDX39A~O00148","LUM~P51884","ALDH1B1~P30837","CA3~P07451","RPS5~M0R0F0",
+            "CALU~O43852","PMM2~O15305","MRPL50~Q8N5N7","IQGAP1~P46940","APMAP~Q9HDC9",
+            "KIAA2013~Q8IYS2","WDR11~Q9BZH6","QARS1~P47897","XYLB~O75191","LMF2~Q9BU23",
+            "CPVL~Q9H3G5","AKR1B1~P15121","GLRX5~Q86SX6","TMEM245~H7C0G1","DDX50~Q9BQ39",
+            "NDUFB4~O95168","UQCRQ~O14949","PLAA~Q9Y263","PRMT5~O14744-2","SAMHD1~Q9Y3Z3",
+            "SORD~Q00796","MTR~A0A7P0T9G7","NPC1~K7EQ23","CTSB~A0A7I2V668","COPS3~Q9UNS2",
+            "NDUFA10~O95299","PPA1~Q15181","RPLP2~P05387","PSMC5~P62195","CALR~A0A7P0T861",
+            "FAU~E9PR30","EPM2A~O95278","EIPR1~A8MUM1","YBX1~P67809","SLC39A14~Q15043-2",
+            "PAFAH1B3~Q15102","MPST~P25325-2","TBL1XR1~A0A0D9SF63","GALNT2~Q10471",
+            "NDUFA4~O00483","NDRG1~Q92597","RAD23B~P54727","None~F5H5P2","HMOX2~P30519",
+            "ME1~P48163","QPRT~Q15274","MYH10~A0A8I5KZ38","MRPS33~C9JBY7","EIF2AK1~Q9BQI3",
+            "CHMP4B~Q9H444","GSTZ1~A0A0C4DFM0","TSEN15~A0A2R8YEM0","FUCA2~Q9BTY2",
+            "ERMP1~A0A8I5KXJ0","AGO1~A0A6I8PTZ8","DGLUCY~Q7Z3D6-3","PEBP1~P30086",
+            "HSPB1~P04792","CNDP2~Q96KP4","RRAS~P10301","AP2S1~M0R0N4","C6orf120~Q7Z4R8",
+            "MRPL21~Q7Z2W9","ACSS1~Q9NUB1-4","RPS15~K7EM56","CES2~O00748","PSAT1~Q9Y617",
+            "HSPH1~Q92598-2","DNPH1~O43598","HBQ1~P09105","RETREG3~Q86VR2","MAOB~P27338",
+            "SDCBP~O00560","B2M~P61769","DERA~G3V158","STAU2~E5RJN7","GDI1~P31150",
+            "MRPL40~Q9NQ50","MRPL39~Q9NYK5-2","H1-0~P07305","GOLIM4~O00461","MRPL3~H0Y9G6",
+            "TPT1~Q5W0H4","ADI1~Q9BV57","SKIC2~A0A8V8TN04","RO60~P10155-3","KARS1~Q15046",
+            "ALDH2~P05091","L3HYPDH~Q96EM0","SLC25A1~P53007","RFC3~P40938","None~E5RI56",
+            "CAVIN2~O95810","CDS2~O95674","PDIA5~Q14554","IGF2R~P11717","RPS14~P62263",
+            "COX6B1~P14854","ABCC2~Q92887","SLC2A2~P11168","AADAT~Q8N5Z0-2","STX12~B1AJQ6",
+            "ARF1~A0A8V8TNZ5","MTDH~Q86UE4","PSMC6~A0A087X2I1","AKR1D1~P51857","ELP1~O95163",
+            "HSD17B2~P37059","MRPL46~Q9H2W6","PRXL2A~Q9BRX8-2","ATP6V1E1~P36543",
+            "HDHD3~Q9BSH5","RHBDD1~Q8TEB9","PHPT1~Q9NRX4","EBP~Q15125","PSMD13~J3KNQ3",
+            "SLC25A10~Q9UBX3","MRPL13~Q9BYD1","HECTD1~A0A8I5KU01","TANGO2~Q6ICL3-3",
+            "SET~A0A8I5KS71","FAM98B~Q52LJ0","PGM3~O95394-4","CUL2~Q13617-2","NT5DC2~Q9H857-3",
+            "LMAN1~P49257","PRKDC~P78527","CRYM~Q14894","FCER1G~P30273","RPL39P5~Q59GN2",
+            "EIF3I~Q13347","NASP~P49321","SDHB~P21912","GNG12~Q9UBI6","BCAT1~P54687-4",
+            "SCLY~A0A0A0MQU4","CUL1~A0A590UJ56","VIL1~P09327","LLGL1~Q15334","EPB41L2~A0A994J5B1",
+            "NUDT16L1~K7EIN2","PSMA2~A0A024RA52","COX6A1~P12074","MRPL58~Q14197","STT3A~P46977",
+            "TBC1D13~Q9NVG8","MCM5~B1AHB1","PCYOX1~Q9UHG3","SNAP23~O00161","ELOC~E5RHG8",
+            "ADK~A0A5F9ZH72","NCEH1~A0A0A0MTJ9","BCAP31~P51572","EPB41L3~A8K968","PRMT1~E9PKG1",
+            "PSMD3~O43242","RUVBL1~Q9Y265","RBBP7~Q16576","BCS1L~Q9Y276","FADS1~A0A0A0MR51",
+            "PAH~P00439","ATP5MF~P56134-3","UGT2A3~Q6UWM9","ACTN4~F5GXS2","SERPINA1~A0A024R6N5",
+            "RPL36AL~Q969Q0","XPO7~E7ESC6","ARHGAP1~Q07960","FAM120A~Q9NZB2","ABCC6~A0A0G2JMG3",
+            "HLA-B~P01889","RDH11~Q8TC12","ESYT1~Q9BSJ8","NPM1~A0A7I2V5S2","PGRMC1~O00264",
+            "GSTM1~P09488","FBXO3~E9PJM3","LBR~Q14739","XPO1~O14980")
+
+# Extract gene symbols from idents
+id_genes <- sub("~.*$", "", idents)
+
+# Overlap & mapping
+overlap <- intersect(genes, id_genes)
+mapping <- tibble(identifier = idents) |>
+  separate(identifier, into = c("gene","uniprot"), sep = "~", remove = FALSE) |>
+  filter(gene %in% overlap) |>
+  select(gene, uniprot)
+
+length(overlap)   # should be 9
+mapping
+
+```
+
+#### Names of unique proteins in GALD compared to the other groups combined
+
+Below a list can be found of proteins that are unique to GALD patients.
+
+```{r}
+# Unique proteins in GALD
+gald_group <- "Fetal_liver_lysate_bait"   # <-- adjust if your GALD group is named differently
+
+# 1) Presence/absence per identifier and group
+present <- df %>%
+  group_by(identifier, group) %>%
+  summarise(present = any(!is.na(Intensity)), .groups = "drop")
+
+# 2) Split into GALD vs others
+present_summary <- present %>%
+  group_by(identifier) %>%
+  summarise(
+    in_gald   = any(group == gald_group & present),
+    in_others = any(group != gald_group & present),
+    .groups = "drop"
+  )
+
+# 3) Keep only identifiers present in GALD and absent elsewhere
+gald_unique <- present_summary %>%
+  filter(in_gald, !in_others) %>%
+  pull(identifier)
+```
+
+```{r}
+gald_unique
+```
+
+```{r}
+# --- Clean start: load packages ---
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(pheatmap)
+  library(matrixStats)
+  library(RColorBrewer)
+})
+
+# --- 0) Read data into 'dat' (avoid using name 'df') ---
+dat <- readr::read_tsv("original.tsv", show_col_types = FALSE)
+
+# quick sanity check
+stopifnot(is.data.frame(dat))
+id_col <- "identifier"
+
+# --- 1) wide matrix: rows = proteins, cols = samples ---
+wide <- dat %>%
+  select(!!sym(id_col), sample, Intensity) %>%
+  pivot_wider(names_from = sample, values_from = Intensity)
+
+mat <- wide %>% select(-!!sym(id_col)) %>% as.matrix()
+rownames(mat) <- wide[[id_col]]
+
+# --- 2) filter proteins by coverage & variability ---
+coverage_thresh <- 0.0   # keep proteins seen in % of samples
+topN <- 2500              # plot top 1000 most variable proteins
+
+cov_frac <- rowMeans(!is.na(mat))
+mat_filt <- mat[cov_frac >= coverage_thresh, , drop = FALSE]
+
+row_var <- matrixStats::rowVars(mat_filt, na.rm = TRUE)
+keep_idx <- order(row_var, decreasing = TRUE)[seq_len(min(topN, nrow(mat_filt)))]
+mat_top <- mat_filt[keep_idx, , drop = FALSE]
+
+# --- 3) simple imputation for visualization only (row median) ---
+row_med <- matrixStats::rowMedians(mat_top, na.rm = TRUE)
+na_pos <- which(is.na(mat_top), arr.ind = TRUE)
+if (length(na_pos)) mat_top[na_pos] <- row_med[na_pos[, 1]]
+
+# --- 4) z-score per protein (row) ---
+row_mean <- rowMeans(mat_top)
+row_sd   <- matrixStats::rowSds(mat_top)
+mat_z <- sweep(sweep(mat_top, 1, row_mean, "-"), 1, row_sd, "/")
+
+# --- 5) sample annotations by group ---
+sample_groups <- dat %>%
+  distinct(sample, group) %>%
+  filter(sample %in% colnames(mat_z)) %>%
+  column_to_rownames("sample")
+
+grp_levels <- unique(sample_groups$group)
+grp_cols <- setNames(
+  RColorBrewer::brewer.pal(max(3, length(grp_levels)), "Set2")[seq_along(grp_levels)],
+  grp_levels
+)
+ann_colors <- list(group = grp_cols)
+
+# --- 6) heatmap ---
+pheatmap(mat_z,
+         show_rownames = FALSE,
+         annotation_col = sample_groups,
+         annotation_colors = ann_colors,
+         clustering_distance_rows = "correlation",
+         clustering_distance_cols = "correlation",
+         main = "Protein × Sample Heatmap (z-scored)",
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(50))
+```
+
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse)
+})
+
+# Fresh read (avoid using name `df`, which you earlier had as a function)
+dat <- readr::read_tsv("original.tsv", show_col_types = FALSE)
+
+id_col <- "identifier"
+
+# How many samples and proteins in total?
+n_samples  <- dplyr::n_distinct(dat$sample)
+n_proteins <- dplyr::n_distinct(dat[[id_col]])
+
+# Protein coverage: in how many samples is each protein detected?
+protein_coverage <- dat %>%
+  distinct(!!sym(id_col), sample) %>%
+  group_by(!!sym(id_col)) %>%
+  summarise(n_samples_present = dplyr::n(), .groups = "drop") %>%
+  mutate(frac_present = n_samples_present / n_samples)
+
+# Sample coverage: how many proteins detected in each sample?
+sample_coverage <- dat %>%
+  distinct(sample, !!sym(id_col)) %>%
+  group_by(sample) %>%
+  summarise(n_proteins_detected = dplyr::n(), .groups = "drop") %>%
+  mutate(frac_of_union = n_proteins_detected / n_proteins)
+
+# Quick peeks
+head(protein_coverage)
+head(sample_coverage)
+
+```
+
+```{r}
+# assume you still have `mat_z` (rows=proteins, cols=samples) and `dat`
+D  <- as.dist(1 - cor(mat_z, use="pairwise.complete.obs"))  # correlation distance
+hc <- hclust(D, method="complete")
+
+k <- 2  # try 2 first (your two super-clusters)
+cl <- cutree(hc, k=k)
+
+ann <- dat %>% distinct(sample, group) %>% column_to_rownames("sample")
+tab <- table(cluster = cl[colnames(mat_z)], group = ann[colnames(mat_z),"group"])
+tab
+
+# samples that disagree with their cluster's majority label
+maj <- apply(tab, 1, function(x) names(which.max(x)))
+suspects <- tibble(sample = names(cl),
+                   cluster = cl,
+                   group = ann[names(cl),"group",drop=TRUE]) %>%
+  group_by(cluster) %>%
+  mutate(cluster_majority = maj[as.character(cluster)],
+         mismatch = group != cluster_majority) %>%
+  arrange(desc(mismatch))
+suspects %>% filter(mismatch)
+
+no_ighlk <- !grepl("^IG[HLK]", rownames(mat_z))
+D2  <- as.dist(1 - cor(mat_z[no_ighlk,], use="pairwise.complete.obs"))
+hc2 <- hclust(D2, method="complete")
+cl2 <- cutree(hc2, k=2)
+table(cluster = cl2[colnames(mat_z)], group = ann[colnames(mat_z),"group"])
+
+C <- cor(mat_z, use="pairwise.complete.obs", method="spearman")
+grp <- ann[colnames(mat_z),"group",drop=TRUE]
+wg  <- sapply(colnames(C), function(s) median(C[s, grp==grp[s] & names(grp)!=s], na.rm=TRUE))
+og  <- sapply(colnames(C), function(s) median(C[s, grp!=grp[s]], na.rm=TRUE))
+qc_similarity <- tibble(sample = names(wg), group = grp, med_within = wg, med_out = og,
+                        delta = wg - og) %>% arrange(delta)
+qc_similarity %>% head(10)   # most suspicious first
+
+
+```
+
+```{r}
+# ---- packages ----
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(pheatmap)
+  library(RColorBrewer)
+})
+
+# read (or reuse your existing 'df' as 'dat')
+dat <- readr::read_tsv("original.tsv", show_col_types = FALSE)
+
+id_col <- "identifier"
+min_prev <- 0.00   # keep proteins present in >=20% of samples
+max_prev <- 1   # ...and <=80% (drops 'sticky' & ultra-rare)
+topN     <- 2500   # max rows to plot (keeps it readable)
+
+# ---- 1) build presence matrix: rows=proteins, cols=samples, values={0,1} ----
+pres_wide <- dat %>%
+  filter(!is.na(.data[[id_col]])) %>%
+  mutate(present = !is.na(Intensity)) %>%
+  group_by(!!sym(id_col), sample) %>%
+  summarise(present = any(present), .groups = "drop") %>%
+  pivot_wider(names_from = sample, values_from = present, values_fill = FALSE) %>%
+  mutate(across(-!!sym(id_col), as.integer))
+
+pres_mat <- pres_wide %>% select(-!!sym(id_col)) %>% as.matrix()
+rownames(pres_mat) <- pres_wide[[id_col]]
+
+# ---- 2) filter by prevalence & variability (optional but helpful) ----
+prev <- rowMeans(pres_mat)                    # fraction of samples with presence
+keep <- prev >= min_prev & prev <= max_prev   # removes very rare & universally present
+pres_mat_f <- pres_mat[keep, , drop = FALSE]
+
+# limit to topN rows by binary variance p(1-p)
+if (nrow(pres_mat_f) > topN) {
+  bin_var <- prev[keep] * (1 - prev[keep])
+  keep_idx <- order(bin_var, decreasing = TRUE)[seq_len(topN)]
+  pres_mat_f <- pres_mat_f[keep_idx, , drop = FALSE]
+}
+
+# ---- 3) annotations for samples (groups) ----
+sample_groups <- dat %>%
+  distinct(sample, group) %>%
+  filter(sample %in% colnames(pres_mat_f)) %>%
+  column_to_rownames("sample")
+
+grp_levels <- unique(sample_groups$group)
+grp_cols <- setNames(
+  RColorBrewer::brewer.pal(max(3, length(grp_levels)), "Set2")[seq_along(grp_levels)],
+  grp_levels
+)
+ann_colors <- list(group = grp_cols)
+
+# ---- 4) Jaccard distance + clustering (columns=samples; rows=proteins) ----
+jaccard_dist_cols <- function(m){
+  m <- m > 0
+  n <- ncol(m)
+  D <- matrix(0, n, n)
+  for (i in 1:n) for (j in i:n) {
+    inter <- sum(m[,i] & m[,j]); uni <- sum(m[,i] | m[,j])
+    d <- if (uni == 0) 0 else 1 - inter/uni
+    D[j,i] <- D[i,j] <- d
+  }
+  stats::as.dist(D)
+}
+jaccard_dist_rows <- function(m){
+  m <- m > 0
+  n <- nrow(m)
+  D <- matrix(0, n, n)
+  for (i in 1:n) for (j in i:n) {
+    inter <- sum(m[i,] & m[j,]); uni <- sum(m[i,] | m[j,])
+    d <- if (uni == 0) 0 else 1 - inter/uni
+    D[j,i] <- D[i,j] <- d
+  }
+  stats::as.dist(D)
+}
+
+hc_cols <- hclust(jaccard_dist_cols(pres_mat_f), method = "complete")
+hc_rows <- hclust(jaccard_dist_rows(pres_mat_f), method = "complete")
+
+# ---- 5) plot presence/absence heatmap ----
+pheatmap(pres_mat_f,
+         cluster_cols = hc_cols,
+         cluster_rows = hc_rows,
+         show_rownames = FALSE,
+         annotation_col = sample_groups,
+         annotation_colors = ann_colors,
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(50))
+         breaks  = c(-0.5, 0.5, 1.5)  # force discrete 0/1 colors
+```
+
+
+```{r}
+main = "Presence/Absence Heatmap (Jaccard clustering)"
+```
+
+```{r}
+
+```
+
+```{"}
+
+```
+
+```{r}
+# assumes `dat` and `protein_coverage` from earlier
+ggplot(protein_coverage, aes(frac_present)) +
+  geom_histogram(bins = 40) +
+  theme_minimal() +
+  labs(title="Protein coverage across samples", x="Fraction of samples detected", y="Proteins")
+
+```
+
+```{r}
+keep_ids <- protein_coverage %>% filter(frac_present >= 0.60) %>% pull(identifier)
+dat_filt <- dat %>% filter(identifier %in% keep_ids)
+
+```
+
+```{r}
+# intensity wide
+X <- dat_filt %>%
+  select(identifier, sample, Intensity) %>%
+  pivot_wider(names_from = sample, values_from = Intensity) %>%
+  column_to_rownames("identifier") %>% as.matrix()
+
+# presence wide (0/1)
+P <- dat %>%                                    # use all detections for presence
+  mutate(present = !is.na(Intensity)) %>%
+  distinct(identifier, sample, present) %>%
+  pivot_wider(names_from = sample, values_from = present, values_fill = FALSE) %>%
+  column_to_rownames("identifier") %>% as.matrix() %>% `storage.mode<-`("integer")
+
+```
+
+```{r}
+qc <- dat %>%
+  distinct(sample, group, identifier) %>%
+  group_by(sample, group) %>%
+  summarise(n_proteins = n(), .groups="drop") %>%
+  left_join(dat %>% group_by(sample) %>% summarise(total_int = sum(Intensity, na.rm=TRUE)), by="sample")
+
+# flag outliers by simple z-score (within all samples)
+qc <- qc %>%
+  mutate(
+    z_n = scale(n_proteins)[,1],
+    z_I = scale(total_int)[,1],
+    outlier = abs(z_n) > 3 | abs(z_I) > 3
+  )
+qc %>% arrange(desc(outlier), z_n) %>% print(n=Inf)
+
+```
+
+```{r}
+# correlation on filtered matrix after simple row-median impute for missing cells
+library(matrixStats)
+X_imp <- X
+ri <- which(is.na(X_imp), arr.ind=TRUE)
+if (length(ri)) {
+  rmed <- rowMedians(X_imp, na.rm=TRUE)
+  X_imp[ri] <- rmed[ri[,1]]
+}
+C <- cor(X_imp, use="pairwise.complete.obs", method="spearman")
+med_corr <- apply(C, 2, function(j) median(j[!is.na(j) & j<1]))
+qc <- qc %>% left_join(tibble(sample=names(med_corr), med_corr), by="sample") %>%
+  mutate(corr_flag = med_corr < 0.8)  # threshold you can tweak
+
+```
+
+```{r}
+no_ig <- !grepl("^IG", rownames(X_imp))
+Xz <- t(scale(t(X_imp[no_ig, , drop=FALSE])))
+library(pheatmap)
+ann <- dat %>% distinct(sample, group) %>% column_to_rownames("sample")
+pheatmap(Xz, show_rownames=FALSE, annotation_col=ann,
+         clustering_distance_cols="correlation", main="Filtered (no Ig) intensity heatmap")
+
+```
+
+```{r}
+pca <- prcomp(t(X_imp[no_ig, ]), scale.=TRUE)
+autoplot <- function(pca, ann){
+  scores <- as.data.frame(pca$x[,1:2]) %>% rownames_to_column("sample") %>%
+    left_join(tibble(sample=rownames(ann), group=ann[,"group", drop=TRUE]), by="sample")
+  ggplot(scores, aes(PC1, PC2, color=group, label=sample)) + geom_point(size=3) +
+    theme_minimal() + labs(title="PCA (filtered, no Ig)")
+}
+autoplot(pca, ann)
+
+```
+
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse); library(matrixStats); library(cluster)
+})
+
+dat <- readr::read_tsv("original.tsv", show_col_types = FALSE)
+id_col <- "identifier"
+
+# Binary labels: GALD vs Others (adjust this label if needed)
+gald_lab <- "Fetal_liver_lysate_bait"
+labels <- dat %>% distinct(sample, group) %>%
+  mutate(y = if_else(group == gald_lab, "GALD", "Other"))
+
+# helper: build filtered z-scored matrix at a given threshold
+build_mat <- function(thr, per_class = FALSE){
+  # coverage counts
+  if (!per_class) {
+    cov <- dat %>% distinct(!!sym(id_col), sample) %>%
+      dplyr::count(!!sym(id_col), name="n") %>%
+      mutate(frac = n / n_distinct(dat$sample))
+    keep_ids <- cov %>% filter(frac >= thr) %>% pull(!!sym(id_col))
+  } else {
+    # require coverage >= thr in BOTH classes (GALD & Other)
+    samp_class <- labels %>% select(sample, y)
+    n_per <- samp_class %>% dplyr::count(y, name="n_samp")
+    percls <- dat %>% distinct(!!sym(id_col), sample) %>%
+      left_join(samp_class, by="sample") %>%
+      dplyr::count(!!sym(id_col), y, name="n_here") %>%
+      left_join(n_per, by="y") %>%
+      mutate(frac = n_here / n_samp) %>%
+      select(-n_here, -n_samp) %>%
+      pivot_wider(names_from=y, values_from=frac, values_fill = 0)
+    keep_ids <- percls %>% filter(GALD >= thr, Other >= thr) %>% pull(!!sym(id_col))
+  }
+
+  X <- dat %>%
+    filter(.data[[id_col]] %in% keep_ids) %>%
+    select(!!sym(id_col), sample, Intensity) %>%
+    pivot_wider(names_from = sample, values_from = Intensity) %>%
+    column_to_rownames(id_col) %>% as.matrix()
+
+  if (nrow(X) < 10 || ncol(X) < 4) return(NULL)
+
+  # row-median impute (viz/QC only), then row z-score
+  idx <- which(is.na(X), arr.ind=TRUE)
+  if (length(idx)) { rmed <- rowMedians(X, na.rm=TRUE); X[idx] <- rmed[idx[,1]] }
+  Xz <- t(scale(t(X)))
+  Xz
+}
+
+# compute metrics over a grid of thresholds
+grid <- seq(0.30, 0.90, by = 0.05)
+results <- map_dfr(grid, function(th){
+  Xz <- build_mat(thr = th, per_class = FALSE)  # set TRUE to require per-class coverage
+  if (is.null(Xz)) return(tibble(threshold = th, n_proteins = 0, silhouette = NA_real_, delta_corr = NA_real_))
+
+  # correlation-based distances and labels
+  C <- cor(Xz, use="pairwise.complete.obs", method="spearman")
+  D <- as.dist(1 - C)
+  y <- labels$y[match(colnames(Xz), labels$sample)]
+  if (any(is.na(y))) return(tibble(threshold = th, n_proteins = nrow(Xz), silhouette = NA_real_, delta_corr = NA_real_))
+
+  # silhouette (1 = perfect separation, 0 = none)
+  sil <- mean(silhouette(as.integer(factor(y)), D)[,"sil_width"], na.rm=TRUE)
+
+  # delta-corr: median within - median out, then median across samples
+  delta <- sapply(seq_len(ncol(Xz)), function(j){
+    g <- y[j]
+    within <- median(C[j, y==g & seq_along(y)!=j], na.rm=TRUE)
+    out    <- median(C[j, y!=g], na.rm=TRUE)
+    within - out
+  }) %>% median(na.rm=TRUE)
+
+  tibble(threshold = th, n_proteins = nrow(Xz), silhouette = sil, delta_corr = delta)
+})
+
+# pick a sensible threshold: maximize silhouette (or delta_corr) with enough proteins
+print(results)
+
+# quick visuals (pick based on plateau/elbow + proteins retained)
+library(ggplot2)
+ggplot(results, aes(threshold, silhouette)) + geom_line() + geom_point() +
+  labs(title="Silhouette vs coverage threshold")
+ggplot(results, aes(threshold, delta_corr)) + geom_line() + geom_point() +
+  labs(title="Within–Out correlation gap vs threshold")
+ggplot(results, aes(threshold, n_proteins)) + geom_line() + geom_point() +
+  labs(title="Proteins retained vs threshold")
+
+```
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse); library(matrixStats); library(pheatmap)
+})
+
+dat <- readr::read_tsv("original.tsv", show_col_types = FALSE)
+id_col   <- "identifier"
+gald_lab <- "Fetal_liver_lysate_bait"        # GALD label
+
+# coverage across all samples
+cov_tbl <- dat %>%
+  distinct(!!sym(id_col), sample) %>%
+  group_by(!!sym(id_col)) %>%
+  summarise(n_samp = n(), .groups="drop") %>%
+  mutate(frac = n_samp / n_distinct(dat$sample))
+
+keep_ids <- cov_tbl %>% filter(frac >= 0.4) %>% pull(!!sym(id_col))
+dat45 <- dat %>% filter(.data[[id_col]] %in% keep_ids)
+
+# sample annotation
+ann <- dat %>% distinct(sample, group)
+# wide matrix rows=proteins, cols=samples
+X <- dat45 %>%
+  select(!!sym(id_col), sample, Intensity) %>%
+  pivot_wider(names_from = sample, values_from = Intensity) %>%
+  column_to_rownames(id_col) %>% as.matrix()
+
+# median-impute per protein (for PCA/heatmap ONLY), then z-score rows
+X_imp <- X
+idx <- which(is.na(X_imp), arr.ind = TRUE)
+if (length(idx)) {
+  rmed <- rowMedians(X_imp, na.rm=TRUE)
+  X_imp[idx] <- rmed[idx[,1]]
+}
+Xz <- t(scale(t(X_imp)))
+
+# PCA on samples
+pca <- prcomp(t(Xz), scale.=FALSE)
+pc_df <- as_tibble(pca$x[,1:2], rownames="sample") %>%
+  left_join(ann, by="sample")
+
+# percent variance
+var_exp <- round(100 * pca$sdev^2 / sum(pca$sdev^2), 1)
+
+ggplot(pc_df, aes(PC1, PC2, color = group, label = sample)) +
+  geom_point(size=2.8) +
+  theme_minimal() +
+  labs(title = "PCA on proteins with ≥45% coverage",
+       subtitle = paste0("PC1 ",var_exp[1],"%, PC2 ",var_exp[2],"% explained variance"))
+no_ighlk <- !grepl("^IG[HLK]", rownames(Xz))
+pca_noIg <- prcomp(t(Xz[no_ighlk, ]), scale.=FALSE)
+pc_noIg <- as_tibble(pca_noIg$x[,1:2], rownames="sample") %>% left_join(ann, by="sample")
+ggplot(pc_noIg, aes(PC1, PC2, color=group)) + geom_point(size=2.8) + theme_minimal() +
+  labs(title="PCA (≥45% coverage, Ig removed)")
+# counts of presence per group
+samp_map <- ann %>% mutate(cls = if_else(group == gald_lab, "GALD", "Other")) %>%
+  select(sample, cls)
+
+pres <- dat %>%
+  distinct(!!sym(id_col), sample) %>%
+  left_join(samp_map, by="sample") %>%
+  group_by(!!sym(id_col), cls) %>%
+  summarise(n_present = n(), .groups="drop")
+
+# map samples to class (GALD vs Other)
+samp_map <- ann %>%
+  mutate(cls = if_else(group == gald_lab, "GALD", "Other")) %>%
+  select(sample, cls)
+
+# totals per class   (REPLACES: samp_map %>% count(cls, name="n_samp"))
+totals <- samp_map %>%
+  group_by(cls) %>%
+  summarise(n_samp = dplyr::n(), .groups = "drop")
+
+# presence counts per protein × class
+pres <- dat %>%
+  distinct(!!sym(id_col), sample) %>%
+  left_join(samp_map, by = "sample") %>%
+  group_by(!!sym(id_col), cls) %>%
+  summarise(n_present = dplyr::n(), .groups = "drop")
+
+# build 2×2 table per protein
+tab <- pres %>%
+  left_join(totals, by = "cls") %>%
+  mutate(n_absent = n_samp - n_present) %>%
+  select(!!sym(id_col), cls, n_present, n_absent) %>%
+  pivot_wider(names_from = cls, values_from = c(n_present, n_absent), values_fill = 0)
+
+# Fisher test per protein
+fisher_res <- tab %>%
+  rowwise() %>%
+  mutate(
+    pval = fisher.test(matrix(c(n_present_GALD, n_absent_GALD,
+                                n_present_Other, n_absent_Other), nrow=2))$p.value,
+    OR   = (n_present_GALD * n_absent_Other + 0.5) / (n_absent_GALD * n_present_Other + 0.5), # Haldane-Anscombe
+    frac_GALD  = n_present_GALD  / (n_present_GALD  + n_absent_GALD),
+    frac_Other = n_present_Other / (n_present_Other + n_absent_Other)
+  ) %>% ungroup() %>%
+  mutate(FDR = p.adjust(pval, method = "BH")) %>%
+  arrange(FDR)
+
+# quick shortlist rule (tune thresholds):
+pres_hits <- fisher_res %>%
+  filter(frac_GALD >= 0.60, frac_Other <= 0.20, FDR <= 0.05)
+
+head(pres_hits, 20)
+min_n <- 3
+
+y_map <- ann %>% mutate(cls = if_else(group == gald_lab, "GALD", "Other")) %>%
+  select(sample, cls)
+
+abund <- dat45 %>%
+  left_join(y_map, by="sample") %>%
+  group_by(!!sym(id_col)) %>%
+  summarise(
+    n_g = sum(!is.na(Intensity[cls=="GALD"])),
+    n_o = sum(!is.na(Intensity[cls=="Other"])),
+    mean_g = mean(Intensity[cls=="GALD"], na.rm=TRUE),
+    mean_o = mean(Intensity[cls=="Other"], na.rm=TRUE),
+    log2FC = mean_g - mean_o,
+    pval = if (n_g >= min_n && n_o >= min_n)
+              t.test(Intensity ~ cls)$p.value else NA_real_,
+    .groups="drop"
+  ) %>%
+  mutate(FDR = p.adjust(pval, method="BH")) %>%
+  arrange(FDR)
+
+abund_hits <- abund %>%
+  filter(!is.na(FDR), FDR <= 0.05, abs(log2FC) >= 1)
+head(abund_hits, 20)
+candidates <- pres_hits %>%
+  inner_join(abund %>% select(!!sym(id_col), log2FC, FDR), by=id_col) %>%
+  arrange(FDR)
+head(candidates, 20)
+```
+Text
+
+```{r}
+# Rank proteins by identifier (exclude antibodies, no log transform)
+suppressPackageStartupMessages({ library(tidyverse); library(readr) })
+
+# ==== INPUTS ====
+infile  <- "original.tsv"
+out_csv <- "protein_ranking_no_antibodies_rawintensity.csv"
+
+g_gald   <- "Fetal_liver_lysate_bait"
+g_female <- "Liver_lysate_female_control"
+g_spouse <- "Liver_lysate_spouses_control"
+groups_keep <- c(g_gald, g_female, g_spouse)
+
+# ==== load ====
+df <- read_tsv(infile, guess_max = 200000, show_col_types = FALSE)
+
+# must-have columns
+need_cols <- c("identifier","sample","Intensity","group")
+stopifnot(all(need_cols %in% names(df)))
+
+# ==== antibody filter (as in your EDA) ====
+df2 <- df %>%
+  filter(group %in% groups_keep) %>%
+  mutate(
+    identifier   = as.character(identifier),
+    base_id      = toupper(sub("~.*$", "", identifier)),
+    is_ab        = grepl("^(IGH|IGK|IGL|IGJ)", base_id) | base_id %in% c("JCHAIN"),
+    intensity_num = suppressWarnings(parse_number(as.character(Intensity))),
+    intensity_num = ifelse(is.finite(intensity_num) & intensity_num > 0, intensity_num, NA_real_)
+  ) %>%
+  filter(!is_ab) %>%   # exclude antibodies
+  select(identifier, group, intensity_num)
+
+stopifnot(nrow(df2) > 0)
+
+# ==== per-group mean intensities (raw, not log) ====
+grp_mean <- df2 %>%
+  group_by(identifier, group) %>%
+  summarise(mean_intensity = mean(intensity_num, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(id_cols = identifier, names_from = group, values_from = mean_intensity)
+
+# ==== differences and ranking ====
+res <- grp_mean %>%
+  mutate(
+    pooled_ctrl     = rowMeans(cbind(.data[[g_female]], .data[[g_spouse]]), na.rm = TRUE),
+    diff_vs_pooled  = .data[[g_gald]] - pooled_ctrl,
+    diff_vs_female  = .data[[g_gald]] - .data[[g_female]],
+    diff_vs_spouse  = .data[[g_gald]] - .data[[g_spouse]],
+    abs_diff_pooled = abs(diff_vs_pooled)
+  ) %>%
+  filter(!is.na(.data[[g_gald]]) & (!is.na(.data[[g_female]]) | !is.na(.data[[g_spouse]]))) %>%
+  arrange(desc(abs_diff_pooled))
+
+# ==== save ====
+write_csv(res, out_csv)
+message("Wrote: ", out_csv)
+
+# quick check
+print(head(res, 20))
+
+
+```
+

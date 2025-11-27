@@ -1,0 +1,750 @@
+---
+title: "peptides_testing"
+format: html
+editor: visual
+---
+
+## Peptide significant testing
+
+infile_evidence \<- "/Users/Dirkdeboer/Dirk/dtu_thesis/data_analysis_dtu/evidence.txt"
+
+sample_map_file \<- "/Users/Dirkdeboer/Dirk/dtu_thesis/data_analysis_dtu/sample_map.tsv"
+
+```{r}
+#!/usr/bin/env Rscript
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(limma)
+  library(purrr)
+})
+
+# ================== INPUTS ==================
+infile_evidence <- "/Users/Dirkdeboer/Dirk/dtu_thesis/data_analysis_dtu/evidence.txt" 
+
+sample_map_file <- "/Users/Dirkdeboer/Dirk/dtu_thesis/data_analysis_dtu/sample_map.tsv"
+
+# Comparison groups (case-sensitive, from sample_map$group)
+g_gald   <- "Fetal_liver_lysate_bait"
+g_female <- "Liver_lysate_female_control"
+g_spouse <- "Liver_lysate_spouses_control"
+groups_keep <- c(g_gald, g_female, g_spouse)
+
+# Limma & preprocessing knobs
+MIN_TOTAL_DETECTIONS <- 1      # >=1 real observation overall before testing
+IMPUTE_Q              <- 0.01  # MinDet quantile
+MINDET_SHIFT          <- 1.0   # subtract 1 on log2 scale for imputed NAs
+
+# Output directory
+outdir <- "results/01_from_evidence"
+dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+
+# ================== LOAD SAMPLE MAP ==================
+# Expect columns: Experiment, sample, group
+smap <- read_tsv(sample_map_file, show_col_types = FALSE)
+stopifnot(all(c("Experiment", "sample", "group") %in% names(smap)))
+
+# ================== LOAD EVIDENCE & MERGE SAMPLE INFO ==================
+ev <- read_tsv(infile_evidence, guess_max = 2e6, show_col_types = FALSE) %>%
+  inner_join(smap, by = c("Experiment" = "Experiment"))
+
+# Sanity: required comparison groups present?
+missing_comp <- setdiff(groups_keep, unique(ev$group))
+if (length(missing_comp) > 0) {
+  stop("Comparison group(s) not found in evidence+sample_map: ",
+       paste(missing_comp, collapse = ", "))
+}
+
+# ================== BASIC PREP: IDENTIFIER, SYMBOL, LOG2 INTENSITY ==================
+ev <- ev %>%
+  mutate(
+    # Gene symbol (may be single or multiple; we keep as-is here)
+    gene_symbol = toupper(`Gene names`),
+
+    # Peptide-level identifier: Sequence~GENE (string, not guaranteed unique biologically)
+    identifier  = paste0(Sequence, "~", gene_symbol),
+
+    # Raw (linear) intensity -> numeric
+    raw_intensity = suppressWarnings(readr::parse_number(as.character(Intensity))),
+
+    # Log2 transform of linear intensity; non-positive / non-finite -> NA
+    log2_int = ifelse(is.finite(raw_intensity) & raw_intensity > 0,
+                      log2(raw_intensity), NA_real_)
+  )
+
+stopifnot(all(c("identifier", "sample", "group", "log2_int", "gene_symbol") %in% names(ev)))
+
+# OPTIONAL: remove antibody-like peptides (commented out for now, like "no filtering")
+ev <- ev %>%
+  mutate(
+    base_symbol = gene_symbol,
+    is_ab = grepl("^(IGH|IGK|IGL|IGJ)", base_symbol) | base_symbol %in% c("JCHAIN")
+  ) %>%
+  filter(!is_ab)
+
+# ================== LIMMA (PRIMARY INFERENCE) ==================
+# Guardrail: >=1 real detection overall BEFORE imputation
+ok_ids <- ev %>%
+  group_by(identifier) %>%
+  summarise(n_obs = sum(is.finite(log2_int)), .groups = "drop") %>%
+  filter(n_obs >= MIN_TOTAL_DETECTIONS) %>%
+  pull(identifier)
+
+ev2 <- ev %>%
+  filter(
+    identifier %in% ok_ids,
+    group %in% groups_keep
+  )
+
+# ---- Wide matrix (rows = identifiers, columns = samples) ----
+# Aggregate multiple PSMs per (identifier, sample) to a single value
+mat <- ev2 %>%
+  select(identifier, sample, log2_int) %>%
+  group_by(identifier, sample) %>%
+  summarise(log2_int = mean(log2_int, na.rm = TRUE), .groups = "drop") %>%
+  tidyr::pivot_wider(
+    id_cols = identifier,
+    names_from = sample,
+    values_from = log2_int
+  )
+
+ids <- mat$identifier
+M   <- as.matrix(mat %>% select(-identifier))
+rownames(M) <- ids
+
+# ---- Robust per-sample MinDet imputation (on log2 scale) ----
+impute_min_det <- function(v, q = IMPUTE_Q, shift = MINDET_SHIFT){
+  is_na <- is.na(v) | !is.finite(v)
+  if (all(is_na)) return(ifelse(is_na, -20, v))  # extreme low fallback
+  vmin <- as.numeric(quantile(v[!is_na], probs = q, names = FALSE, type = 7))
+  v[is_na] <- vmin - shift
+  v
+}
+
+M_imp <- apply(M, 2, impute_min_det, q = IMPUTE_Q, shift = MINDET_SHIFT)
+
+# ---- Sample annotation & design: GALD vs CTRL ----
+samp_anno <- ev2 %>%
+  distinct(sample, group) %>%
+  mutate(case_control = if_else(group == g_gald, "GALD", "CTRL")) %>%
+  filter(sample %in% colnames(M_imp))
+
+# Reorder columns to match samp_anno
+M_imp <- M_imp[, samp_anno$sample, drop = FALSE]
+
+design <- model.matrix(~ 0 + factor(case_control, levels = c("CTRL","GALD")),
+                       data = samp_anno)
+colnames(design) <- c("CTRL", "GALD")
+contrast <- makeContrasts(GALDvsCTRL = GALD - CTRL, levels = design)
+
+fit <- lmFit(M_imp, design)
+fit <- contrasts.fit(fit, contrast)
+fit <- eBayes(fit, robust = TRUE, trend = TRUE)
+
+tt <- topTable(fit, coef = "GALDvsCTRL", number = Inf, sort.by = "P") %>%
+  rownames_to_column("identifier") %>%
+  rename(
+    logFC     = logFC,     # log2(GALD/CTRL)
+    AveExpr   = AveExpr,
+    t_stat    = t,
+    P.Value   = P.Value,
+    adj.P.Val = adj.P.Val,
+    B         = B
+  )
+
+# ================== MAP IDENTIFIER -> GENE SYMBOL ==================
+# identifier format: Sequence~GENE; recover the gene symbol
+tt <- tt %>%
+  mutate(
+    symbol = toupper(sub(".*~", "", identifier))
+  ) %>%
+  filter(!is.na(symbol) & symbol != "")
+
+# ---- Save full peptide-level limma table ----
+limma_csv <- file.path(outdir, "peptide_ranking_limma_all.csv")
+readr::write_csv(tt, limma_csv)
+cat("Wrote: ", limma_csv, "\n", sep = "")
+
+# ================== BUILD GENE-LEVEL RANKING VECTOR FOR FGSEA ==================
+# Multiple peptides per symbol → keep the one with largest |t_stat|
+ranks_tbl <- tt %>%
+  arrange(desc(abs(t_stat))) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  select(symbol, t_stat)
+
+# Named numeric vector: names = symbols, values = t_stat (sorted decreasing)
+ranks_vec <- setNames(ranks_tbl$t_stat, ranks_tbl$symbol)
+ranks_vec <- sort(ranks_vec, decreasing = TRUE)
+
+# Save as RDS (for FGSEA)
+ranks_rds <- file.path(outdir, "ranks_tstat_full_all_peptides.rds")
+saveRDS(ranks_vec, ranks_rds)
+cat("Wrote: ", ranks_rds, " (", length(ranks_vec), " genes)\n", sep = "")
+
+# Also save a CSV for human inspection
+ranks_csv <- file.path(outdir, "ranks_tstat_full_all_peptides.csv")
+readr::write_csv(
+  ranks_tbl %>% arrange(desc(t_stat)),
+  ranks_csv
+)
+cat("Wrote: ", ranks_csv, "\n", sep = "")
+
+# ================== RUN SUMMARY ==================
+cat("\n=== RUN SUMMARY (01_build_ranks_from_evidence.R) ===\n",
+    "Peptide-level rows in limma table (post-filter): ", nrow(tt), "\n",
+    "Unique gene symbols in ranking vector: ", length(ranks_vec), "\n",
+    "Min/Max t_stat: ", signif(min(ranks_vec), 3), " / ", signif(max(ranks_vec), 3), "\n",
+    sep = "")
+
+```
+
+#### FGSEA analysis on peptides
+
+```{r}
+#!/usr/bin/env Rscript
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(fgsea)
+})
+
+# ================== INPUTS ==================
+# Path to peptide ranking table (symbol, t_stat) from 01_build_ranks_from_evidence.R
+ranks_file <- "results/01_from_evidence/ranks_tstat_full_all_peptides.csv"
+
+# Path to GO Biological Process GMT file (you uploaded c5.go.bp.v2025.1.Hs.symbols.gmt.txt)
+gmt_file   <- "/Users/Dirkdeboer/Dirk/dtu_thesis/geneSetSimplifyR/gmt/c5.go.bp.v2025.1.Hs.symbols.gmt.txt"
+
+# Output directory for fgsea results
+outdir <- "results/02_fgsea_peptides"
+dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+
+# FGSEA knobs
+MIN_SIZE <- 10      # minimum genes in a pathway
+MAX_SIZE <- 500     # maximum genes in a pathway
+N_PERM   <- 10000   # number of permutations (can lower to 1000 while testing)
+
+# ================== LOAD RANKING VECTOR (PEPTIDES) ==================
+message("Reading peptide ranking table from: ", ranks_file)
+
+ranks_tbl <- readr::read_csv(ranks_file, show_col_types = FALSE)
+
+# Expect columns: symbol, t_stat
+stopifnot(all(c("symbol", "t_stat") %in% names(ranks_tbl)))
+
+# Remove missing symbols / stats
+ranks_tbl <- ranks_tbl %>%
+  filter(!is.na(symbol),
+         !is.na(t_stat))
+
+# In case of duplicated symbols, keep the entry with largest |t_stat|
+ranks_tbl <- ranks_tbl %>%
+  arrange(desc(abs(t_stat))) %>%
+  distinct(symbol, .keep_all = TRUE)
+
+# Build named numeric vector: names = gene symbols, values = t_stat
+ranks_vec <- setNames(ranks_tbl$t_stat, ranks_tbl$symbol)
+
+# Sort in decreasing order (not strictly required, but conventional for fgsea)
+ranks_vec <- sort(ranks_vec, decreasing = TRUE)
+
+message("Ranking vector: ", length(ranks_vec), " unique genes")
+
+# ================== LOAD GENE SETS (GMT) ==================
+message("Reading gene sets from GMT: ", gmt_file)
+
+pathways <- fgsea::gmtPathways(gmt_file)
+
+message("Loaded ", length(pathways), " gene sets from GMT")
+
+# ================== RUN FGSEA ==================
+set.seed(123)  # for reproducibility
+
+message("Running fgsea on peptide ranking vector...")
+
+fgsea_res <- fgsea::fgsea(
+  pathways = pathways,
+  stats    = ranks_vec,
+  minSize  = MIN_SIZE,
+  maxSize  = MAX_SIZE,
+  nperm    = N_PERM
+)
+
+# Convert to tibble and sort by adjusted p-value
+fgsea_res_tbl <- as_tibble(fgsea_res) %>%
+  arrange(padj)
+
+# Basic summary
+n_sig_05  <- sum(fgsea_res_tbl$padj < 0.05, na.rm = TRUE)
+n_sig_025 <- sum(fgsea_res_tbl$padj < 0.25, na.rm = TRUE)
+
+message("FGSEA complete.")
+message("Significant pathways (padj < 0.05):  ", n_sig_05)
+message("Significant pathways (padj < 0.25): ", n_sig_025)
+
+# ================== SAVE FULL RESULTS ==================
+fgsea_outfile <- file.path(outdir, "fgsea_peptides_go_bp_full.csv")
+readr::write_csv(fgsea_res_tbl, fgsea_outfile)
+message("Wrote full fgsea results to: ", fgsea_outfile)
+
+# ================== SAVE TOP N PATHWAYS FOR DOWNSTREAM PLOTTING ==================
+TOP_N <- 150  # for geneSetSimplifyR or nice overview plots
+
+fgsea_topN <- fgsea_res_tbl %>%
+  slice_head(n = TOP_N)
+
+fgsea_topN_file <- file.path(outdir, paste0("fgsea_peptides_go_bp_top", TOP_N, ".csv"))
+readr::write_csv(fgsea_topN, fgsea_topN_file)
+message("Wrote top-", TOP_N, " fgsea pathways to: ", fgsea_topN_file)
+
+# ================== OPTIONAL: PRINT HEAD TO CONSOLE ==================
+message("\nTop 10 pathways (by padj):")
+print(fgsea_res_tbl %>% slice_head(n = 10))
+
+message("\n=== DONE: 02_fgsea_peptides.R ===")
+
+```
+
+```{r}
+#!/usr/bin/env Rscript
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(ggrepel)
+})
+
+# ================== INPUTS ==================
+# adjust these if your files live somewhere else
+prot_file <- "/Users/Dirkdeboer/Dirk/dtu_thesis/data_analysis_dtu/results/01_from_original/protein_ranking_limma_all.csv"
+pep_file  <- "/Users/Dirkdeboer/Dirk/dtu_thesis/results/01_from_evidence/peptide_ranking_limma_all.csv"
+
+# thresholds for “significant” points
+LOGFC_CUT <- 1          # vertical lines at +/- 1 (2-fold)
+PADJ_CUT  <- 0.05       # BH threshold
+
+# how many labels on each side
+N_LABEL_UP   <- 15
+N_LABEL_DOWN <- 15
+
+# ================== LOAD DATA ==================
+prot <- readr::read_csv(prot_file, show_col_types = FALSE)
+pep  <- readr::read_csv(pep_file,  show_col_types = FALSE)
+
+# expect columns: logFC, P.Value, adj.P.Val, symbol
+stopifnot(all(c("logFC","P.Value","adj.P.Val") %in% names(prot)))
+stopifnot(all(c("logFC","P.Value","adj.P.Val") %in% names(pep)))
+
+# if symbol column is missing for peptides, derive from identifier:
+if (!"symbol" %in% names(pep) && "identifier" %in% names(pep)) {
+  pep <- pep %>%
+    mutate(symbol = toupper(sub("~.*$", "", identifier)))
+}
+if (!"symbol" %in% names(prot) && "identifier" %in% names(prot)) {
+  prot <- prot %>%
+    mutate(symbol = toupper(sub("~.*$", "", identifier)))
+}
+
+# ================== HELPER FUNCTION ==================
+make_volcano_df <- function(df) {
+  df %>%
+    mutate(
+      negLogP = -log10(P.Value),
+      sig = case_when(
+        adj.P.Val < PADJ_CUT & logFC >=  LOGFC_CUT ~ "up",
+        adj.P.Val < PADJ_CUT & logFC <= -LOGFC_CUT ~ "down",
+        TRUE ~ "ns"
+      )
+    )
+}
+
+plot_volcano <- function(df, title) {
+  df2 <- make_volcano_df(df)
+
+  # choose labels: strongest up/down by p-value among sig points
+  up_lab <- df2 %>%
+    filter(sig == "up", !is.na(symbol)) %>%
+    slice_max(negLogP, n = N_LABEL_UP)
+
+  down_lab <- df2 %>%
+    filter(sig == "down", !is.na(symbol)) %>%
+    slice_max(negLogP, n = N_LABEL_DOWN)
+
+  lab_df <- bind_rows(up_lab, down_lab)
+
+  ggplot(df2, aes(x = logFC, y = negLogP)) +
+    geom_point(aes(color = sig), alpha = 0.4, size = 1) +
+    scale_color_manual(
+      values = c(
+        "down" = "#1f78b4",   # blue
+        "ns"   = "grey80",
+        "up"   = "#e31a1c"    # red
+      ),
+      breaks = c("down","ns","up"),
+      labels = c("Down (sig)", "Not sig", "Up (sig)"),
+      name   = NULL
+    ) +
+    geom_vline(xintercept = c(-LOGFC_CUT, LOGFC_CUT),
+               linetype = "dashed", color = "grey40") +
+    geom_hline(yintercept = -log10(0.05),
+               linetype = "dashed", color = "grey40") +
+    ggrepel::geom_text_repel(
+      data = lab_df,
+      aes(label = symbol, color = sig),
+      size = 3,
+      max.overlaps = 100,
+      show.legend = FALSE
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      panel.grid.minor = element_blank()
+    ) +
+    labs(
+      title = title,
+      x = "log2FC (GALD vs controls)",
+      y = "-log10(p-value)"
+    )
+}
+
+# ================== MAKE PLOTS ==================
+
+p_prot <- plot_volcano(
+  prot,
+  title = "Protein level: GALD vs controls"
+)
+
+p_pep <- plot_volcano(
+  pep,
+  title = "Peptide level: GALD vs controls"
+)
+
+# print to RStudio / device
+print(p_prot)
+print(p_pep)
+
+# ================== OPTIONAL: SAVE AS PNG ==================
+ggsave("results/03_volcano_protein.png", p_prot,
+       width = 7, height = 6, dpi = 300)
+ggsave("results/03_volcano_peptide.png", p_pep,
+       width = 7, height = 6, dpi = 300)
+
+# ================== OPTIONAL: COMBINED FACET PLOT ==================
+prot_v <- make_volcano_df(prot) %>% mutate(track = "protein")
+pep_v  <- make_volcano_df(pep)  %>% mutate(track = "peptide")
+
+all_v <- bind_rows(prot_v, pep_v)
+
+p_facet <- ggplot(all_v, aes(x = logFC, y = negLogP)) +
+  geom_point(aes(color = sig), alpha = 0.35, size = 0.9) +
+  scale_color_manual(
+    values = c("down" = "#1f78b4", "ns" = "grey80", "up" = "#e31a1c"),
+    guide = "none"
+  ) +
+  geom_vline(xintercept = c(-LOGFC_CUT, LOGFC_CUT),
+             linetype = "dashed", color = "grey40") +
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dashed", color = "grey40") +
+  facet_wrap(~ track, ncol = 2) +
+  theme_minimal(base_size = 12) +
+  labs(
+    title = "Volcano plots: protein vs peptide level (GALD vs controls)",
+    x = "log2FC (GALD vs controls)",
+    y = "-log10(p-value)"
+  )
+
+print(p_facet)
+
+ggsave("results/03_volcano_protein_peptide_facet.png", p_facet,
+       width = 10, height = 5, dpi = 300)
+
+```
+
+dd
+
+prot \<- "/Users/Dirkdeboer/Dirk/dtu_thesis/data_analysis_dtu/results/01_from_original/ranks_tstat_full_all.csv" pep \<- "/Users/Dirkdeboer/Dirk/dtu_thesis/data_analysis_dtu/results/01_from_evidence/ranks_tstat_full_all_peptides.csv"
+
+```{r}
+library(tidyverse)
+library(pheatmap)
+
+# ======================
+# Load protein & peptide ranks
+# ======================
+prot_ranks <- read_csv("/Users/Dirkdeboer/Dirk/dtu_thesis/data_analysis_dtu/results/01_from_original/ranks_tstat_full_all.csv") %>%
+  rename(t_stat_protein = t_stat, gene = symbol)
+
+pep_ranks <- read_csv("/Users/Dirkdeboer/Dirk/dtu_thesis/data_analysis_dtu/results/01_from_evidence/ranks_tstat_full_all_peptides.csv") %>%
+  rename(t_stat_peptide = t_stat, gene = symbol)
+
+# Ensure no duplicated genes
+prot_ranks <- prot_ranks %>% distinct(gene, .keep_all = TRUE)
+pep_ranks  <- pep_ranks  %>% distinct(gene, .keep_all = TRUE)
+
+# ======================
+# Take top 200 by |t|
+# ======================
+prot_top200 <- prot_ranks %>%
+  arrange(desc(abs(t_stat_protein))) %>%
+  slice_head(n = 200)
+
+pep_top200 <- pep_ranks %>%
+  arrange(desc(abs(t_stat_peptide))) %>%
+  slice_head(n = 200)
+
+# Overlapping genes
+overlap_sy <- intersect(prot_top200$gene, pep_top200$gene)
+
+# ======================
+# Build matrix: 2 rows (protein, peptide) × genes
+# ======================
+df <- tibble(gene = overlap_sy) %>%
+  left_join(prot_ranks, by = "gene") %>%
+  left_join(pep_ranks, by = "gene") %>%
+  select(gene, t_stat_protein, t_stat_peptide) %>%
+  column_to_rownames("gene")
+
+# Transpose so rows = protein/peptide, cols = genes
+mat <- t(as.matrix(df))
+
+# ======================
+# Heatmap
+# ======================
+pheatmap(
+  mat,
+  cluster_rows = FALSE,
+  cluster_cols = TRUE,
+  main = "t-statistics for overlapping top-200 genes (Protein vs Peptide)"
+)
+
+prot_sig <- prot %>% filter(adj.P.Val < 0.05) %>% pull(symbol)
+pep_sig  <- pep  %>% filter(adj.P.Val < 0.05) %>% pull(symbol)
+
+jaccard <- length(intersect(prot_sig, pep_sig)) / length(union(prot_sig, pep_sig))
+jaccard
+
+
+```
+
+```{r}
+#!/usr/bin/env Rscript
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(ggrepel)
+  library(pheatmap)
+})
+
+## ================== INPUTS & SETTINGS ==================
+prot_file <- "/Users/Dirkdeboer/Dirk/dtu_thesis/data_analysis_dtu/results/01_from_original/protein_ranking_limma_all.csv"
+pep_file  <- "/Users/Dirkdeboer/Dirk/dtu_thesis/data_analysis_dtu/results/01_from_evidence/peptide_ranking_limma_all.csv"
+
+# DE thresholds
+PADJ_CUT <- 0.05
+LFC_CUT  <- 1    # |log2FC| >= 1
+
+outdir <- "results/04_similarity"
+dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+
+## ================== LOAD LIMMA TABLES ==================
+prot <- readr::read_csv(prot_file, show_col_types = FALSE)
+pep  <- readr::read_csv(pep_file,  show_col_types = FALSE)
+
+stopifnot(all(c("symbol","logFC","t_stat","P.Value","adj.P.Val") %in% names(prot)))
+stopifnot(all(c("symbol","logFC","t_stat","P.Value","adj.P.Val") %in% names(pep)))
+
+prot <- prot %>% filter(!is.na(symbol))
+pep  <- pep  %>% filter(!is.na(symbol))
+
+## ================== ALIGN BY GENE SYMBOL ==================
+both <- inner_join(
+  prot %>% select(symbol,
+                  logFC_prot = logFC,
+                  t_prot     = t_stat,
+                  padj_prot  = adj.P.Val),
+  pep  %>% select(symbol,
+                  logFC_pep = logFC,
+                  t_pep     = t_stat,
+                  padj_pep  = adj.P.Val),
+  by = "symbol"
+)
+
+message("Genes present in BOTH analyses: ", nrow(both))
+
+## ================== CLASSIFY GENES ==================
+class_dir <- function(lfc, padj) {
+  case_when(
+    padj < PADJ_CUT & lfc >=  LFC_CUT ~ "Up",
+    padj < PADJ_CUT & lfc <= -LFC_CUT ~ "Down",
+    TRUE                              ~ "NS"
+  )
+}
+
+both <- both %>%
+  mutate(
+    dir_prot = class_dir(logFC_prot, padj_prot),
+    dir_pep  = class_dir(logFC_pep,  padj_pep)
+  )
+
+## ================== 1) JACCARD INDEX ==================
+prot_sig_set <- both %>%
+  filter(dir_prot != "NS") %>%
+  pull(symbol) %>%
+  unique()
+
+pep_sig_set <- both %>%
+  filter(dir_pep != "NS") %>%
+  pull(symbol) %>%
+  unique()
+
+intersect_genes <- intersect(prot_sig_set, pep_sig_set)
+union_genes     <- union(prot_sig_set, pep_sig_set)
+
+jaccard <- length(intersect_genes) / max(1, length(union_genes))
+message("Jaccard index (significant Up/Down genes): ", round(jaccard, 3))
+
+writeLines(
+  sprintf("Jaccard index (protein vs peptide significant genes): %.3f", jaccard),
+  file.path(outdir, "jaccard_summary.txt")
+)
+
+## ================== 2) RANK–RANK SCATTER OF t-STATS ==================
+# Categorize for colouring
+both <- both %>%
+  mutate(
+    cat = case_when(
+      dir_prot != "NS" & dir_pep != "NS" & sign(t_prot) == sign(t_pep) ~ "Both sig, same dir",
+      dir_prot != "NS" & dir_pep != "NS" & sign(t_prot) != sign(t_pep) ~ "Both sig, opposite dir",
+      dir_prot != "NS" & dir_pep == "NS"                               ~ "Protein-only sig",
+      dir_prot == "NS" & dir_pep != "NS"                               ~ "Peptide-only sig",
+      TRUE                                                             ~ "NS both"
+    )
+  )
+
+p_scatter <- ggplot(both, aes(x = t_prot, y = t_pep, color = cat)) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey70") +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey70") +
+  geom_point(alpha = 0.5, size = 0.8) +
+  scale_color_manual(
+    values = c(
+      "Both sig, same dir"     = "#33a02c",
+      "Both sig, opposite dir" = "#e31a1c",
+      "Protein-only sig"       = "#1f78b4",
+      "Peptide-only sig"       = "#ff7f00",
+      "NS both"                = "grey80"
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  labs(
+    title = "Rank–rank t-statistics: Protein vs Peptide",
+    x = "t-statistic (protein)",
+    y = "t-statistic (peptide)",
+    color = NULL
+  )
+
+ggsave(file.path(outdir, "scatter_tstat_protein_vs_peptide.png"),
+       p_scatter, width = 7, height = 6, dpi = 300)
+
+## ================== 3) 3×3 AGREEMENT MATRIX + TILE PLOT ==================
+agree_tbl <- both %>%
+  count(dir_prot, dir_pep, name = "n")
+
+# Save table
+readr::write_csv(agree_tbl,
+                 file.path(outdir, "agreement_matrix_counts.csv"))
+
+p_agree <- ggplot(agree_tbl,
+                  aes(x = dir_prot, y = dir_pep, fill = n)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = n), size = 4) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  theme_minimal(base_size = 12) +
+  labs(
+    title = "Agreement of DE calls (Protein vs Peptide)",
+    x = "Protein classification",
+    y = "Peptide classification",
+    fill = "Count"
+  )
+
+ggsave(file.path(outdir, "agreement_matrix_tile.png"),
+       p_agree, width = 5, height = 5, dpi = 300)
+
+## ================== 4) OPTIONAL: SMALL t-STAT HEATMAP FOR OVERLAP ==================
+## ======================
+## FIXED: t-stat heatmap for overlapping top-200 genes
+## ======================
+
+# Get top 200 both
+prot_top200 <- both %>%
+  arrange(desc(abs(t_prot))) %>%
+  slice_head(n = 200)
+
+pep_top200 <- both %>%
+  arrange(desc(abs(t_pep))) %>%
+  slice_head(n = 200)
+
+# Overlap
+overlap_top <- intersect(prot_top200$symbol, pep_top200$symbol)
+
+# Deduplicate before pivoting
+both_unique <- both %>%
+  filter(symbol %in% overlap_top) %>%
+  distinct(symbol, .keep_all = TRUE)   # <-- key fix
+
+# Construct matrix
+mat_df <- both_unique %>%
+  select(symbol, t_prot, t_pep) %>%
+  column_to_rownames("symbol") %>%
+  as.matrix() %>%
+  t()
+
+# Plot
+png(file.path(outdir, "tstat_heatmap_top_overlap.png"),
+    width = 1800, height = 500)
+pheatmap::pheatmap(
+  mat_df,
+  cluster_rows = FALSE,
+  cluster_cols = TRUE,
+  main = "t-statistics for overlapping top-200 genes\nProtein vs Peptide"
+)
+dev.off()
+
+
+```
+
+```{r}
+library(tidyverse)
+library(pheatmap)
+
+prot_fg <- readr::read_csv("results/02_fgsea_from_original/GO_BP_fgsea_from_original.csv",
+                           show_col_types = FALSE)
+pep_fg  <- readr::read_csv("results/02_fgsea_peptides/fgsea_peptides_go_bp_full.csv",
+                           show_col_types = FALSE)
+
+# 1) choose top peptide pathways (e.g. padj < 0.05, or top 30)
+pep_top <- pep_fg %>%
+  arrange(padj) %>%
+  filter(!is.na(padj)) %>%
+  slice_head(n = 30)   # or filter(padj < 0.05)
+
+# 2) merge with protein NES
+merged_top <- pep_top %>%
+  select(pathway, NES_pep = NES, padj_pep = padj) %>%
+  left_join(
+    prot_fg %>% select(pathway, NES_prot = NES, padj_prot = padj),
+    by = "pathway"
+  )
+
+# 3) build matrix: rows = pathways, cols = NES_prot / NES_pep
+mat <- merged_top %>%
+  select(pathway, NES_prot, NES_pep) %>%
+  column_to_rownames("pathway") %>%
+  as.matrix()
+
+# 4) heatmap
+pheatmap::pheatmap(
+  mat,
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,
+  main = "GO BP enrichment: peptide vs protein (NES)"
+)
+
+```
