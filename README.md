@@ -11,7 +11,7 @@ This repository contains all analyses performed to:
 - Perform differential abundance testing (limma)  
 - Run gene-set enrichment (FGSEA) and pathway clustering  
 - Generate reproducible figures for scientific reporting
-- 
+
 ## Repository Structure
 
 R scripts in one folder
