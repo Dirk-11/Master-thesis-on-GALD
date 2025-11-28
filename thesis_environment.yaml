@@ -1,0 +1,784 @@
+thesis_environment:
+  R_version: R version 4.5.1 (2025-06-13)
+  platform: aarch64-apple-darwin20
+  packages:
+  - package: abind
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: AnnotationDbi
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.0)
+  - package: ape
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: aplot
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: askpass
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: backports
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: base64enc
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: BH
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: Biobase
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.0)
+  - package: BiocGenerics
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.1)
+  - package: BiocParallel
+    version: 1.42.2
+    source: Bioconductor 3.21 (R 4.5.1)
+  - package: Biostrings
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.0)
+  - package: bit
+    version: 4.6.0
+    source: CRAN (R 4.5.0)
+  - package: bit64
+    version: 4.6.0-1
+    source: CRAN (R 4.5.0)
+  - package: bitops
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: blob
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: bookdown
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: broom
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: bslib
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: cachem
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: callr
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: caTools
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: cellranger
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: checkmate
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: cli
+    version: 3.6.5
+    source: CRAN (R 4.5.0)
+  - package: clipr
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: cluster
+    version: .na.character
+    source: CRAN (R 4.5.1)
+  - package: clusterProfiler
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.0)
+  - package: clustree
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: codetools
+    version: 0.2-20
+    source: CRAN (R 4.5.1)
+  - package: commonmark
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: conflicted
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: cowplot
+    version: 1.2.0
+    source: CRAN (R 4.5.0)
+  - package: cpp11
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: crayon
+    version: 1.5.3
+    source: CRAN (R 4.5.0)
+  - package: crosstalk
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: curl
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: data.table
+    version: 1.17.8
+    source: CRAN (R 4.5.0)
+  - package: DBI
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: dbplyr
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: deldir
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: digest
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: DOSE
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.0)
+  - package: dotCall64
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: dplyr
+    version: 1.1.4
+    source: CRAN (R 4.5.0)
+  - package: dqrng
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: dtplyr
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: enrichplot
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.1)
+  - package: evaluate
+    version: 1.0.5
+    source: CRAN (R 4.5.0)
+  - package: fansi
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: farver
+    version: 2.1.2
+    source: CRAN (R 4.5.0)
+  - package: fastDummies
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: fastmap
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: fastmatch
+    version: 1.1-6
+    source: CRAN (R 4.5.0)
+  - package: fgsea
+    version: 1.34.2
+    source: Bioconductor 3.21 (R 4.5.1)
+  - package: fitdistrplus
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: FNN
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: fontawesome
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: forcats
+    version: 1.0.1
+    source: CRAN (R 4.5.0)
+  - package: formatR
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: fs
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: futile.logger
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: futile.options
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: future
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: future.apply
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: gargle
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: generics
+    version: 0.1.4
+    source: CRAN (R 4.5.0)
+  - package: geneSetSimplifyR
+    version: .na.character
+    source: Github (chihs-dtu/geneSetSimplifyR@a296b0f6b4d91db9112e8732a53595bd5e8e9ba6)
+  - package: GenomeInfoDb
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.1)
+  - package: GenomeInfoDbData
+    version: .na.character
+    source: Bioconductor
+  - package: GenomicRanges
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.0)
+  - package: ggforce
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: ggfun
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: ggnewscale
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: ggplot2
+    version: 4.0.0
+    source: CRAN (R 4.5.0)
+  - package: ggplotify
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: ggraph
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: ggrepel
+    version: 0.9.6
+    source: CRAN (R 4.5.0)
+  - package: ggridges
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: ggtangle
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: ggtree
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.1)
+  - package: globals
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: glue
+    version: 1.8.0
+    source: CRAN (R 4.5.0)
+  - package: GO.db
+    version: .na.character
+    source: Bioconductor
+  - package: goftest
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: googledrive
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: googlesheets4
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: GOSemSim
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.0)
+  - package: gplots
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: graphlayouts
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: gridExtra
+    version: '2.3'
+    source: CRAN (R 4.5.0)
+  - package: gridGraphics
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: gson
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: gtable
+    version: 0.3.6
+    source: CRAN (R 4.5.0)
+  - package: gtools
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: haven
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: here
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: highr
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: hms
+    version: 1.1.4
+    source: CRAN (R 4.5.0)
+  - package: htmltools
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: htmlwidgets
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: httpuv
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: httr
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: ica
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: ids
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: igraph
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: IRanges
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.0)
+  - package: irlba
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: isoband
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: janeaustenr
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: jquerylib
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: jsonlite
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: KEGGREST
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.1)
+  - package: KernSmooth
+    version: .na.character
+    source: CRAN (R 4.5.1)
+  - package: knitr
+    version: '1.50'
+    source: CRAN (R 4.5.0)
+  - package: labeling
+    version: 0.4.3
+    source: CRAN (R 4.5.0)
+  - package: lambda.r
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: later
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: lattice
+    version: 0.22-7
+    source: CRAN (R 4.5.1)
+  - package: lazyeval
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: leidenbase
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: lifecycle
+    version: 1.0.4
+    source: CRAN (R 4.5.0)
+  - package: limma
+    version: 3.64.3
+    source: Bioconductor 3.21 (R 4.5.1)
+  - package: listenv
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: lmtest
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: lubridate
+    version: 1.9.4
+    source: CRAN (R 4.5.0)
+  - package: magrittr
+    version: 2.0.4
+    source: CRAN (R 4.5.0)
+  - package: MASS
+    version: .na.character
+    source: CRAN (R 4.5.1)
+  - package: Matrix
+    version: 1.7-4
+    source: CRAN (R 4.5.0)
+  - package: matrixStats
+    version: 1.5.0
+    source: CRAN (R 4.5.0)
+  - package: memoise
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: mime
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: miniUI
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: modelr
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: MSnbase
+    version: .na.character
+    source: .na.character
+  - package: nlme
+    version: .na.character
+    source: CRAN (R 4.5.1)
+  - package: openssl
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: org.Hs.eg.db
+    version: .na.character
+    source: .na.character
+  - package: otel
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: parallelly
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: patchwork
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: pbapply
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: pheatmap
+    version: 1.0.13
+    source: CRAN (R 4.5.0)
+  - package: pillar
+    version: 1.11.1
+    source: CRAN (R 4.5.0)
+  - package: pkgconfig
+    version: 2.0.3
+    source: CRAN (R 4.5.0)
+  - package: plogr
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: plotly
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: plyr
+    version: 1.8.9
+    source: CRAN (R 4.5.0)
+  - package: png
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: polyclip
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: prettyunits
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: processx
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: progress
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: progressr
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: promises
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: ps
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: purrr
+    version: 1.2.0
+    source: CRAN (R 4.5.0)
+  - package: qusage
+    version: .na.character
+    source: .na.character
+  - package: qvalue
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.0)
+  - package: R.methodsS3
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: R.oo
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: R.utils
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: R6
+    version: 2.6.1
+    source: CRAN (R 4.5.0)
+  - package: ragg
+    version: 1.5.0
+    source: CRAN (R 4.5.0)
+  - package: RANN
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: rappdirs
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: RColorBrewer
+    version: 1.1-3
+    source: CRAN (R 4.5.0)
+  - package: Rcpp
+    version: 1.1.0
+    source: CRAN (R 4.5.0)
+  - package: RcppAnnoy
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: RcppArmadillo
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: RcppEigen
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: RcppHNSW
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: RcppProgress
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: RcppRoll
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: RcppTOML
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: readr
+    version: 2.1.5
+    source: CRAN (R 4.5.0)
+  - package: readxl
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: rematch
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: rematch2
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: reprex
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: reshape2
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: reticulate
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: Rhtslib
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.0)
+  - package: rlang
+    version: 1.1.6
+    source: CRAN (R 4.5.0)
+  - package: rmarkdown
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: rmdformats
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: ROCR
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: rprojroot
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: Rsamtools
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.1)
+  - package: RSpectra
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: RSQLite
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: rstudioapi
+    version: 0.17.1
+    source: CRAN (R 4.5.0)
+  - package: Rtsne
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: rvest
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: S4Vectors
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.0)
+  - package: S7
+    version: 0.2.0
+    source: CRAN (R 4.5.0)
+  - package: sass
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: scales
+    version: 1.4.0
+    source: CRAN (R 4.5.0)
+  - package: scattermore
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: scatterpie
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: sctransform
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: selectr
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: sessioninfo
+    version: 1.2.3
+    source: CRAN (R 4.5.0)
+  - package: Seurat
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: SeuratObject
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: shiny
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: Signac
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: sitmo
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: snow
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: SnowballC
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: sourcetools
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: sp
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: spam
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: spatstat.data
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: spatstat.explore
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: spatstat.geom
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: spatstat.random
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: spatstat.sparse
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: spatstat.univar
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: spatstat.utils
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: statmod
+    version: 1.5.1
+    source: CRAN (R 4.5.0)
+  - package: stringi
+    version: 1.8.7
+    source: CRAN (R 4.5.0)
+  - package: stringr
+    version: 1.6.0
+    source: CRAN (R 4.5.0)
+  - package: survival
+    version: .na.character
+    source: CRAN (R 4.5.1)
+  - package: sys
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: systemfonts
+    version: 1.3.1
+    source: CRAN (R 4.5.0)
+  - package: tensor
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: textshaping
+    version: 1.0.4
+    source: CRAN (R 4.5.0)
+  - package: tibble
+    version: 3.3.0
+    source: CRAN (R 4.5.0)
+  - package: tidygraph
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: tidyr
+    version: 1.3.1
+    source: CRAN (R 4.5.0)
+  - package: tidyselect
+    version: 1.2.1
+    source: CRAN (R 4.5.0)
+  - package: tidyseurat
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: tidytext
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: tidytree
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: tidyverse
+    version: 2.0.0
+    source: CRAN (R 4.5.0)
+  - package: timechange
+    version: 0.3.0
+    source: CRAN (R 4.5.0)
+  - package: tinytex
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: tokenizers
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: treeio
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.0)
+  - package: ttservice
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: tweenr
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: tzdb
+    version: 0.5.0
+    source: CRAN (R 4.5.0)
+  - package: UCSC.utils
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.0)
+  - package: utf8
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: uuid
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: uwot
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: vctrs
+    version: 0.6.5
+    source: CRAN (R 4.5.0)
+  - package: VennDiagram
+    version: .na.character
+    source: .na.character
+  - package: viridis
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: viridisLite
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: vroom
+    version: 1.6.6
+    source: CRAN (R 4.5.0)
+  - package: withr
+    version: 3.0.2
+    source: CRAN (R 4.5.0)
+  - package: xfun
+    version: '0.54'
+    source: CRAN (R 4.5.0)
+  - package: xml2
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: xtable
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: XVector
+    version: .na.character
+    source: Bioconductor 3.21 (R 4.5.0)
+  - package: yaml
+    version: 2.3.10
+    source: CRAN (R 4.5.0)
+  - package: yulab.utils
+    version: .na.character
+    source: CRAN (R 4.5.0)
+  - package: zoo
+    version: .na.character
+    source: CRAN (R 4.5.0)
