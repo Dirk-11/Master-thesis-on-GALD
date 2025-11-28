@@ -1,0 +1,94 @@
+---
+title: "GSEA"
+output: html_document
+date: "2025-11-11"
+---
+
+```{r setup, include=FALSE}
+# 01_preparation.R
+suppressPackageStartupMessages({
+  library(readr); library(dplyr); library(tidyr); library(stringr); library(purrr)
+})
+
+dir.create("results/01_prepared_gene_lists", recursive = TRUE, showWarnings = FALSE)
+
+# A) HITS (for ORA): keep your significant candidates as-is
+sig <- read_csv("/Users/Dirkdeboer/Dirk/dtu_thesis/geneSetSimplifyR/data/thesis_candidates_gald_enriched.csv", guess_max = 2e5)
+
+sig2 <- sig %>%
+  separate_wider_delim(identifier, names = c("symbol","uniprot"),
+                       delim="~", too_few="align_start")
+
+hits_symbols <- sig2$symbol %>% unique() %>% na.omit()
+
+# B) FULL (for FGSEA + ORA universe): use the unfiltered limma export
+full <- read_csv("/Users/Dirkdeboer/Dirk/dtu_thesis/geneSetSimplifyR/data/all_tested_proteins.csv", guess_max = 2e5)
+
+# Ensure we have HGNC gene symbol and a t-stat column
+full2 <- full %>%
+  # if your file still has `identifier` use it; else assume `gene` already exists
+  mutate(symbol = dplyr::coalesce(
+           if ("gene" %in% names(.)) .data$gene else NA_character_,
+           if ("identifier" %in% names(.)) str_split_fixed(identifier, "~", 2)[,1] else NA_character_
+         )) %>%
+  mutate(t_stat = dplyr::coalesce(
+           if ("t" %in% names(.)) .data$t else NA_real_,
+           if ("t_stat" %in% names(.)) .data$t_stat else NA_real_
+         )) %>%
+  filter(!is.na(symbol), is.finite(t_stat))
+
+# Deduplicate to one row per symbol for ranks (strongest |t|)
+ranks_tbl <- full2 %>%
+  arrange(desc(abs(t_stat))) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  select(symbol, t_stat)
+
+ranks <- setNames(ranks_tbl$t_stat, ranks_tbl$symbol)
+
+# ORA universe = all tested symbols (unfiltered)
+universe <- full2 %>% pull(symbol) %>% unique() %>% sort()
+
+# Write outputs (clear names!)
+write_lines(hits_symbols, "results/01_prepared_gene_lists/hits_symbols.txt")
+saveRDS(ranks,       "results/01_prepared_gene_lists/ranks_tstat_full.rds")
+write_lines(universe, "results/01_prepared_gene_lists/universe_full.txt")
+
+# Optional: also keep a human-readable CSV of ranks
+write_csv(ranks_tbl %>% mutate(direction = if_else(t_stat>=0,"up_in_GALD","down_in_GALD")) ,
+          "results/01_prepared_gene_lists/ranks_tstat_full.csv")
+
+```
+
+```{r}
+# 02_fgsea.R
+suppressPackageStartupMessages({ library(fgsea); library(readr); library(dplyr) })
+dir.create("results/02_fgsea", showWarnings = FALSE)
+
+# Use full ranks (all tested genes)
+ranks <- readRDS("/Users/Dirkdeboer/Dirk/dtu_thesis/data_analysis_dtu/results/01_from_original/ranks_tstat_full_all.rds")
+
+# Basic integrity checks
+stopifnot(is.numeric(ranks), length(ranks) > 500)   # proteomics should have many hundreds+
+stopifnot(all(!is.na(names(ranks))), all(names(ranks)!=""))
+
+run_fgsea <- function(gmt_path, out_prefix, ranks_vec = ranks, minSize = 15L, maxSize = 500L) {
+  pathways <- gmtPathways(gmt_path)
+  fg <- fgsea(pathways, ranks_vec, minSize = minSize, maxSize = maxSize, scoreType = "std")
+  fg <- fg[order(fg$padj, fg$pval, -abs(fg$NES)), ]
+  out_csv <- sprintf("results/02_fgsea/%s_fgsea.csv", out_prefix)
+  write_csv(as.data.frame(fg), file = out_csv)
+  message("Wrote: ", out_csv, " (", nrow(fg), " pathways)")
+  fg
+}
+
+# Run for GO BP and Reactome (adjust paths to your GMTs)
+fg_go <- run_fgsea("/Users/Dirkdeboer/Dirk/dtu_thesis/geneSetSimplifyR/gmt/c5.go.bp.v2025.1.Hs.symbols.gmt.txt",   out_prefix = "GO_BP")
+fg_re <- run_fgsea("/Users/Dirkdeboer/Dirk/dtu_thesis/geneSetSimplifyR/gmt/c2.cp.reactome.v2025.1.Hs.symbols.gmt.txt", out_prefix = "Reactome")
+
+# Save only significant subsets too (padj <= 0.1 shown here; pick your cutoff)
+write_csv(subset(as.data.frame(fg_go), padj <= 0.1), "results/02_fgsea/GO_BP_fgsea_sig.csv")
+write_csv(subset(as.data.frame(fg_re), padj <= 0.1), "results/02_fgsea/Reactome_fgsea_sig.csv")
+
+```
+
+

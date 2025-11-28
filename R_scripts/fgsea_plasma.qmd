@@ -1,0 +1,327 @@
+---
+title: "plasma_"
+format: html
+editor: visual
+---
+
+## Quarto
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+## Running Code
+
+When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+
+```{r}
+#!/usr/bin/env Rscript
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(limma)
+  library(purrr)
+})
+
+# ================== INPUTS ==================
+# Path to the plasma R0848 "original.tsv" (identifier / sample / Intensity / group)
+infile <- "/Users/Dirkdeboer/Downloads/original_plasma.tsv"  # <-- adjust if needed
+
+# Groups in 'group' column (case-sensitive)
+g_gald  <- "GALD"
+g_ctrl  <- "Control"
+groups_keep <- c(g_gald, g_ctrl)
+
+# Limma & preprocessing knobs
+MIN_TOTAL_DETECTIONS <- 1      # >=1 real observation overall before testing
+IMPUTE_Q              <- 0.01  # MinDet quantile (per sample)
+MINDET_SHIFT          <- 1.0   # subtract 1 on log2 scale for imputed NAs
+
+# Thresholds for defining a "significant" gene set (for DAVID, etc.)
+P_ADJ_THR  <- 0.05
+LOGFC_THR  <- 0.5
+
+# Output directory
+outdir <- "results/01_plasma_R0848_from_original"
+dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+
+# ================== LOAD & BASIC SANITY CHECKS ==================
+df_raw <- read_tsv(infile, guess_max = 2e5, show_col_types = FALSE)
+
+required_cols <- c("identifier", "leading razor protein", "gene name",
+                   "sample", "Intensity", "group")
+if (!all(required_cols %in% names(df_raw))) {
+  stop("Missing required columns in plasma original.tsv. Found: ",
+       paste(names(df_raw), collapse = ", "))
+}
+
+# Check that both groups exist
+all_groups <- df_raw %>% distinct(group) %>% pull(group)
+missing_groups <- setdiff(groups_keep, all_groups)
+if (length(missing_groups) > 0) {
+  stop("Group(s) not found in original.tsv: ", paste(missing_groups, collapse = ", "))
+}
+
+cat("Groups found in data: ", paste(sort(unique(all_groups)), collapse = ", "), "\n", sep = "")
+
+# ================== PREPARE DATA ==================
+# Keep only GALD + Control samples, and rename 'gene name' -> gene_name
+df <- df_raw %>%
+  filter(group %in% groups_keep) %>%
+  rename(
+    gene_name = `gene name`
+  ) %>%
+  mutate(
+    identifier = as.character(identifier),
+    # Intensity is already on log2 scale in your example, but we parse numerically and
+    # call it 'log2_int' for consistency with the liver script
+    log2_int   = suppressWarnings(readr::parse_number(as.character(Intensity))),
+    log2_int   = ifelse(is.finite(log2_int), log2_int, NA_real_)
+  )
+
+stopifnot(all(c("identifier", "sample", "group", "gene_name", "log2_int") %in% names(df)))
+
+# ================== LIMMA (PRIMARY INFERENCE) ==================
+# Guardrail: keep only identifiers with at least MIN_TOTAL_DETECTIONS real values
+ok_ids <- df %>%
+  group_by(identifier) %>%
+  summarise(n_obs = sum(is.finite(log2_int)), .groups="drop") %>%
+  filter(n_obs >= MIN_TOTAL_DETECTIONS) %>%
+  pull(identifier)
+
+df2 <- df %>% filter(identifier %in% ok_ids)
+
+# Map identifier -> gene_name for later (gene-level mapping)
+id2gene <- df2 %>%
+  distinct(identifier, gene_name)
+
+# ---- Wide matrix (rows = identifiers, columns = samples) ----
+mat <- df2 %>%
+  select(identifier, sample, log2_int) %>%
+  distinct() %>%
+  tidyr::pivot_wider(
+    id_cols   = identifier,
+    names_from = sample,
+    values_from = log2_int
+  )
+
+ids <- mat$identifier
+M   <- as.matrix(mat %>% select(-identifier))
+rownames(M) <- ids
+
+# ---- Robust per-sample MinDet imputation ----
+impute_min_det <- function(v, q = IMPUTE_Q, shift = MINDET_SHIFT){
+  is_na <- is.na(v) | !is.finite(v)
+  if (all(is_na)) return(ifelse(is_na, -20, v))  # extreme low fallback
+  vmin <- as.numeric(quantile(v[!is_na], probs = q, names = FALSE, type = 7))
+  v[is_na] <- vmin - shift
+  v
+}
+
+M_imp <- apply(M, 2, impute_min_det, q = IMPUTE_Q, shift = MINDET_SHIFT)
+
+# ---- Sample annotation & design: GALD vs CTRL ----
+samp_anno <- df2 %>%
+  distinct(sample, group) %>%
+  mutate(case_control = if_else(group == g_gald, "GALD", "CTRL")) %>%
+  filter(sample %in% colnames(M_imp))
+
+# Reorder columns of M_imp to match samp_anno
+M_imp <- M_imp[, samp_anno$sample, drop = FALSE]
+
+design <- model.matrix(~ 0 + factor(case_control, levels = c("CTRL","GALD")),
+                       data = samp_anno)
+colnames(design) <- c("CTRL","GALD")
+
+contrast <- makeContrasts(GALDvsCTRL = GALD - CTRL, levels = design)
+
+fit <- lmFit(M_imp, design)
+fit <- contrasts.fit(fit, contrast)
+fit <- eBayes(fit, robust = TRUE, trend = TRUE)
+
+tt <- topTable(fit, coef = "GALDvsCTRL", number = Inf, sort.by = "P") %>%
+  rownames_to_column("identifier") %>%
+  rename(
+    logFC     = logFC,     # log2(GALD/CTRL)
+    AveExpr   = AveExpr,
+    t_stat    = t,
+    P.Value   = P.Value,
+    adj.P.Val = adj.P.Val,
+    B         = B
+  )
+
+# ================== MAP TO GENE SYMBOLS (USING gene_name) ==================
+tt <- tt %>%
+  left_join(id2gene, by = "identifier") %>%
+  mutate(symbol = toupper(gene_name)) %>%
+  filter(!is.na(symbol) & symbol != "")
+
+# ---- Save full protein-level limma table ----
+limma_csv <- file.path(outdir, "plasma_R0848_protein_limma_all.csv")
+readr::write_csv(tt, limma_csv)
+cat("Wrote: ", limma_csv, "\n", sep = "")
+
+# ================== BUILD GENE-LEVEL RANKING VECTOR FOR FGSEA ==================
+# Multiple identifiers may map to same symbol → keep the one with largest |t_stat|
+ranks_tbl <- tt %>%
+  arrange(desc(abs(t_stat))) %>%
+  distinct(symbol, .keep_all = TRUE) %>%
+  select(symbol, t_stat)
+
+# Named numeric vector: names = symbols, values = t_stat (sorted decreasing)
+ranks_vec <- setNames(ranks_tbl$t_stat, ranks_tbl$symbol)
+ranks_vec <- sort(ranks_vec, decreasing = TRUE)
+
+# Save as RDS (for FGSEA)
+ranks_rds <- file.path(outdir, "plasma_R0848_ranks_tstat_full_all.rds")
+saveRDS(ranks_vec, ranks_rds)
+cat("Wrote: ", ranks_rds, " (", length(ranks_vec), " genes)\n", sep = "")
+
+# Also save a CSV for human inspection
+ranks_csv <- file.path(outdir, "plasma_R0848_ranks_tstat_full_all.csv")
+readr::write_csv(
+  ranks_tbl %>% arrange(desc(t_stat)),
+  ranks_csv
+)
+cat("Wrote: ", ranks_csv, "\n", sep = "")
+
+# ================== MAKE DAVID / ORA GENE LISTS ==================
+# 1) Background: all tested gene symbols
+background_genes <- tt %>%
+  distinct(symbol) %>%
+  pull(symbol) %>%
+  sort()
+
+background_file <- file.path(outdir, "plasma_R0848_background_genes.txt")
+readr::write_lines(background_genes, background_file)
+cat("Wrote: ", background_file, " (", length(background_genes), " genes)\n", sep = "")
+
+# 2) Significant genes: adj.P.Val & |logFC| thresholds
+sig_tbl <- tt %>%
+  filter(adj.P.Val < P_ADJ_THR, abs(logFC) > LOGFC_THR)
+
+sig_genes <- sig_tbl %>%
+  distinct(symbol) %>%
+  pull(symbol) %>%
+  sort()
+
+sig_file <- file.path(outdir, "plasma_R0848_sig_genes_for_DAVID.txt")
+readr::write_lines(sig_genes, sig_file)
+cat("Wrote: ", sig_file, " (", length(sig_genes), " genes)\n", sep = "")
+
+# ================== RUN SUMMARY ==================
+cat("\n=== RUN SUMMARY (01_build_ranks_from_plasma_R0848.R) ===\n",
+    "Proteins (identifiers) in limma table (post-filter): ", nrow(tt), "\n",
+    "Unique gene symbols in ranking vector: ", length(ranks_vec), "\n",
+    "Background genes for ORA/DAVID: ", length(background_genes), "\n",
+    "Significant genes (adj.P.Val <", P_ADJ_THR,
+    " & |logFC| >", LOGFC_THR, "): ", length(sig_genes), "\n",
+    "Min/Max t_stat: ", signif(min(ranks_vec),3), " / ", signif(max(ranks_vec),3), "\n",
+    sep = "")
+
+```
+
+```{r}
+# ==========================================
+# UNIQUE PROTEIN ANALYSIS (Plasma R0848)
+# ==========================================
+
+eda2_outdir <- file.path(outdir, "uniques")
+dir.create(eda2_outdir, showWarnings = FALSE)
+
+cat("\n=== UNIQUE PROTEIN ANALYSIS (PLASMA) ===\n")
+
+df_clean <- df_raw %>%
+  filter(group %in% groups_keep) %>%
+  rename(gene_name = `gene name`) %>%
+  mutate(
+    identifier = as.character(identifier),
+    log2_int   = suppressWarnings(parse_number(as.character(Intensity)))
+  )
+
+# ---- 1. Total unique proteins ----
+all_unique <- df_clean %>% distinct(identifier) %>% pull(identifier)
+cat("Total unique proteins detected: ", length(all_unique), "\n")
+
+# ---- 2. Unique proteins in each group ----
+gald_unique_ids <- df_clean %>%
+  filter(group == g_gald) %>%
+  distinct(identifier) %>%
+  pull(identifier)
+
+ctrl_unique_ids <- df_clean %>%
+  filter(group == g_ctrl) %>%
+  distinct(identifier) %>%
+  pull(identifier)
+
+cat("Unique in GALD:    ", length(gald_unique_ids), "\n")
+cat("Unique in Control: ", length(ctrl_unique_ids), "\n")
+
+# ---- 3. Overlap ----
+overlap_ids <- intersect(gald_unique_ids, ctrl_unique_ids)
+cat("Overlap (shared proteins): ", length(overlap_ids), "\n")
+
+# ---- 4. Proteins exclusive to GALD or Controls ----
+exclusive_gald    <- setdiff(gald_unique_ids, ctrl_unique_ids)
+exclusive_control <- setdiff(ctrl_unique_ids, gald_unique_ids)
+
+cat("Exclusive to GALD:    ", length(exclusive_gald), "\n")
+cat("Exclusive to Control: ", length(exclusive_control), "\n")
+
+# ---- 5. Occurrence counts per protein (how many samples detected in) ----
+occ_tbl <- df_clean %>%
+  group_by(identifier, group) %>%
+  summarise(
+    n_samples_detected = sum(is.finite(log2_int)),
+    .groups = "drop"
+  )
+
+write_csv(occ_tbl, file.path(eda2_outdir, "protein_occurrence_counts.csv"))
+
+cat("Occurrence table saved.\n")
+
+# ---- 6. Export tables for thesis ----
+
+write_lines(all_unique,
+            file.path(eda2_outdir, "all_unique_proteins.txt"))
+
+write_lines(exclusive_gald,
+            file.path(eda2_outdir, "exclusive_gald_proteins.txt"))
+
+write_lines(exclusive_control,
+            file.path(eda2_outdir, "exclusive_control_proteins.txt"))
+
+write_lines(overlap_ids,
+            file.path(eda2_outdir, "shared_gald_control_proteins.txt"))
+
+cat("All unique-protein tables written to 'uniques' folder.\n\n")
+
+```
+
+```{r}
+# Path to your limma file
+limma_file <- "/Users/Dirkdeboer/Dirk/dtu_thesis/thesis/R_scripts/results/01_plasma_R0848_from_original/plasma_R0848_protein_limma_all.csv"
+
+# Load limma table
+tt <- readr::read_csv(limma_file, show_col_types = FALSE)
+
+# Check required columns
+stopifnot(all(c("logFC", "adj.P.Val") %in% names(tt)))
+
+# Define thresholds
+p_thr  <- 0.05
+fc_thr <- 1
+
+# Significant = both p-adjusted and fold change pass threshold
+sig <- tt %>%
+  filter(adj.P.Val < p_thr, abs(logFC) > fc_thr)
+
+# Upregulated and downregulated
+up   <- sig %>% filter(logFC >  fc_thr)
+down <- sig %>% filter(logFC < -fc_thr)
+
+# Print results
+cat("Total proteins in limma file: ", nrow(tt), "\n")
+cat("Significant (adj.P.Val < 0.05 & |logFC| > 1): ", nrow(sig), "\n")
+cat("  Upregulated  (logFC > 1):  ", nrow(up), "\n")
+cat("  Downregulated(logFC < -1): ", nrow(down), "\n")
+
+```

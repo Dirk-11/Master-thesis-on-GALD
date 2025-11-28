@@ -1,0 +1,97 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 <mxfile host="app.diagrams.net" modified="2025-11-27T21:45:00Z" agent="5.0" version="22.0.8" editor="diagramly">\
+  <diagram id="GALD_WORKFLOW" name="Workflow">\
+    <mxGraphModel dx="1360" dy="827" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="1800" math="0" shadow="0">\
+      <root>\
+        <mxCell id="0"/>\
+        <mxCell id="1" parent="0"/>\
+\
+        <!-- INPUTS -->\
+        <mxCell id="input_plasma" value="R0848 maternal plasma&#xa;15 GALD, 15 controls" style="shape=rectangle;whiteSpace=wrap;rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13" vertex="1" parent="1">\
+          <mxGeometry x="140" y="80" width="220" height="80" as="geometry"/>\
+        </mxCell>\
+\
+        <mxCell id="input_ip" value="R1344 fetal liver IP&#xa;15 GALD IP&#xa;15 female controls&#xa;12 spouse controls" style="shape=rectangle;whiteSpace=wrap;rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13" vertex="1" parent="1">\
+          <mxGeometry x="460" y="70" width="260" height="100" as="geometry"/>\
+        </mxCell>\
+\
+        <!-- PRI PROCESSING -->\
+        <mxCell id="pri_processing" value="External PRI processing&#xa;- MaxQuant for IP&#xa;- DIA pipeline for plasma&#xa;- Protein inference + LFQ&#xa;- Outputs: original.tsv, proteinGroups.txt, peptides.txt" style="shape=rectangle;whiteSpace=wrap;rounded=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13" vertex="1" parent="1">\
+          <mxGeometry x="250" y="220" width="360" height="130" as="geometry"/>\
+        </mxCell>\
+\
+        <!-- ARROWS INPUT -> PRI -->\
+        <mxCell id="a1" edge="1" parent="1" source="input_plasma" target="pri_processing">\
+          <mxGeometry relative="1" as="geometry"/>\
+        </mxCell>\
+        <mxCell id="a2" edge="1" parent="1" source="input_ip" target="pri_processing">\
+          <mxGeometry relative="1" as="geometry"/>\
+        </mxCell>\
+\
+        <!-- R ANALYSIS HEADER -->\
+        <mxCell id="analysis_header" value="R analysis pipeline" style="shape=rectangle;whiteSpace=wrap;rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=15;fontStyle=1" vertex="1" parent="1">\
+          <mxGeometry x="270" y="380" width="320" height="50" as="geometry"/>\
+        </mxCell>\
+\
+        <mxCell id="a3" edge="1" parent="1" source="pri_processing" target="analysis_header">\
+          <mxGeometry relative="1" as="geometry"/>\
+        </mxCell>\
+\
+        <!-- PREPROCESSING -->\
+        <mxCell id="preprocess" value="Preprocessing&#xa;- Load PRI files&#xa;- Sample grouping&#xa;- Use log2 intensities&#xa;- Impute missing (left shift)" style="shape=rectangle;whiteSpace=wrap;rounded=1;fillColor=#e1f3e1;strokeColor=#82b366;fontSize=12" vertex="1" parent="1">\
+          <mxGeometry x="60" y="470" width="240" height="130" as="geometry"/>\
+        </mxCell>\
+\
+        <!-- PRESENCE / ABSENCE -->\
+        <mxCell id="presence" value="Presence / absence&#xa;- Define present vs absent&#xa;- GALD-unique proteins&#xa;- GALD-unique peptides&#xa;- UpSet plots" style="shape=rectangle;whiteSpace=wrap;rounded=1;fillColor=#e1f3e1;strokeColor=#82b366;fontSize=12" vertex="1" parent="1">\
+          <mxGeometry x="320" y="470" width="240" height="130" as="geometry"/>\
+        </mxCell>\
+\
+        <!-- DIFF ABUNDANCE -->\
+        <mxCell id="diff" value="Differential abundance (limma)&#xa;- Protein level&#xa;- Peptide level&#xa;- Volcano plots" style="shape=rectangle;whiteSpace=wrap;rounded=1;fillColor=#e1f3e1;strokeColor=#82b366;fontSize=12" vertex="1" parent="1">\
+          <mxGeometry x="580" y="470" width="240" height="130" as="geometry"/>\
+        </mxCell>\
+\
+        <!-- ARROWS FROM HEADER -->\
+        <mxCell id="a4" edge="1" parent="1" source="analysis_header" target="preprocess">\
+          <mxGeometry relative="1" as="geometry"/>\
+        </mxCell>\
+        <mxCell id="a5" edge="1" parent="1" source="analysis_header" target="presence">\
+          <mxGeometry relative="1" as="geometry"/>\
+        </mxCell>\
+        <mxCell id="a6" edge="1" parent="1" source="analysis_header" target="diff">\
+          <mxGeometry relative="1" as="geometry"/>\
+        </mxCell>\
+\
+        <!-- PATHWAY ANALYSIS -->\
+        <mxCell id="pathway" value="Pathway enrichment&#xa;- FGSEA on t-statistics&#xa;- Reactome + GO:BP&#xa;- Cluster with geneSetSimplifyR" style="shape=rectangle;whiteSpace=wrap;rounded=1;fillColor=#e1f3e1;strokeColor=#82b366;fontSize=12" vertex="1" parent="1">\
+          <mxGeometry x="320" y="630" width="260" height="120" as="geometry"/>\
+        </mxCell>\
+\
+        <mxCell id="a7" edge="1" parent="1" source="presence" target="pathway">\
+          <mxGeometry relative="1" as="geometry"/>\
+        </mxCell>\
+        <mxCell id="a8" edge="1" parent="1" source="diff" target="pathway">\
+          <mxGeometry relative="1" as="geometry"/>\
+        </mxCell>\
+\
+        <!-- OUTPUTS -->\
+        <mxCell id="outputs" value="Outputs&#xa;- Heatmaps (protein, peptide)&#xa;- Volcano plots&#xa;- UpSet diagrams&#xa;- Pathway clusters&#xa;- Summary tables" style="shape=rectangle;whiteSpace=wrap;rounded=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13" vertex="1" parent="1">\
+          <mxGeometry x="300" y="780" width="300" height="150" as="geometry"/>\
+        </mxCell>\
+\
+        <mxCell id="a9" edge="1" parent="1" source="pathway" target="outputs">\
+          <mxGeometry relative="1" as="geometry"/>\
+        </mxCell>\
+\
+      </root>\
+    </mxGraphModel>\
+  </diagram>\
+</mxfile>\
+}
